@@ -118,7 +118,7 @@ function cleanMask(mask, w, h) {
 }
 
 /** Push opaque colours outward so UV samples near the silhouette never hit background. */
-function bleed(data, mask, w, h, iterations = 24) {
+export function bleed(data, mask, w, h, iterations = 24) {
   let cur = mask.slice();
   let next = new Uint8Array(w * h);
   for (let it = 0; it < iterations; it++) {

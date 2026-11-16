@@ -303,7 +303,7 @@ function readme(manifest, modelFile) {
 | \`character.json\` | 描述檔：尺寸、節點、插槽、動畫清單、部件資訊 |
 | \`c3d-loader.js\` | three.js 載入輔助程式（播放動畫、掛載配件） |
 | \`index.html\` | 示範網頁（需以 HTTP 伺服器開啟，例如 \`npx serve .\`） |
-| \`textures/\` | 各部件的 PNG 貼圖（2×2 圖集：正面/背面/側面/頂部） |
+| \`textures/\` | 各部件烘焙後的 PNG 貼圖（已內嵌在 GLB 中，這裡另附一份方便修改） |
 | \`preview.png\` | 預覽縮圖 |
 | \`project.c3d.json\` | 可在 Char3D Converter 重新開啟編輯的專案檔 |
 

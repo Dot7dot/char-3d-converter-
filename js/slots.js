@@ -11,13 +11,13 @@ export const VIEWS = [
 
 export const SLOTS = [
   // ---- body (三頭身: head = 1, torso = 1, legs = 1 head-unit)
-  { id: 'head', group: 'body', name: '頭部', en: 'Head', icon: 'head', mode: 'inflate', depth: 0.92, backFill: 'color', size: 1,
+  { id: 'head', sideMode: 'profile', group: 'body', name: '頭部', en: 'Head', icon: 'head', mode: 'inflate', depth: 0.92, backFill: 'color', size: 1,
     hint: '正面畫臉與頭髮輪廓；背面畫後腦勺。沒有背面時會用頭頂顏色（髮色）填補。' },
-  { id: 'torso', group: 'body', name: '胸部 / 軀幹', en: 'Torso', icon: 'torso', mode: 'inflate', depth: 0.62, backFill: 'mirror', size: 0.95,
+  { id: 'torso', sideMode: 'profile', group: 'body', name: '胸部 / 軀幹', en: 'Torso', icon: 'torso', mode: 'inflate', depth: 0.62, backFill: 'mirror', size: 0.95,
     hint: '只畫軀幹（不含手臂），從脖子到腰部。' },
-  { id: 'arms', group: 'body', name: '手臂', en: 'Arms', icon: 'arm', mode: 'inflate', depth: 1, backFill: 'mirror', size: 0.8, pair: true,
+  { id: 'arms', sideMode: 'profile', group: 'body', name: '手臂', en: 'Arms', icon: 'arm', mode: 'inflate', depth: 1, backFill: 'mirror', size: 0.8, pair: true,
     hint: '畫「角色右手臂」（畫面左邊那隻）從肩膀到手掌，左手會自動鏡像。' },
-  { id: 'legs', group: 'body', name: '腳 / 下半身', en: 'Legs', icon: 'legs', mode: 'inflate', depth: 0.85, backFill: 'mirror', size: 1,
+  { id: 'legs', sideMode: 'profile', group: 'body', name: '腳 / 下半身', en: 'Legs', icon: 'legs', mode: 'inflate', depth: 0.85, backFill: 'mirror', size: 1,
     hint: '從腰部到腳底，兩條腿中間留空隙（去背）就能各自擺動。' },
   // ---- accessories
   { id: 'hat', group: 'acc', name: '帽子', en: 'Hat', icon: 'hat', mode: 'revolve', depth: 1, backFill: 'mirror', size: 1.06,
@@ -30,9 +30,9 @@ export const SLOTS = [
     hint: '武器/道具直立畫，握把在下方。' },
   { id: 'handL', group: 'acc', name: '左手持物', en: 'Left hand', icon: 'shield', mode: 'extrude', depth: 1.0, backFill: 'mirror', size: 0.7, grip: 0.5,
     hint: '盾牌、書本、燈籠等。' },
-  { id: 'waist', group: 'acc', name: '腰部配件', en: 'Waist', icon: 'belt', mode: 'inflate', depth: 0.75, backFill: 'mirror', size: 1.12,
+  { id: 'waist', sideMode: 'profile', group: 'acc', name: '腰部配件', en: 'Waist', icon: 'belt', mode: 'inflate', depth: 0.75, backFill: 'mirror', size: 1.12,
     hint: '腰帶、裙子、腰包。物件上緣會對齊腰部。' },
-  { id: 'shoes', group: 'acc', name: '鞋子', en: 'Shoes', icon: 'shoe', mode: 'inflate', depth: 1.0, backFill: 'mirror', size: 1.1, pair: true,
+  { id: 'shoes', sideMode: 'profile', group: 'acc', name: '鞋子', en: 'Shoes', icon: 'shoe', mode: 'inflate', depth: 1.0, backFill: 'mirror', size: 1.1, pair: true,
     hint: '畫「右腳鞋子」正面，左腳自動鏡像。提供側面可得到正確鞋長。' },
   // ---- standalone prop (object mode)
   { id: 'object', group: 'prop', name: '物件', en: 'Prop', icon: 'box', mode: 'inflate', depth: 1, backFill: 'mirror', size: 1,
@@ -67,6 +67,7 @@ export function defaultParams(slot) {
     taper: { w: [1, 1, 1], d: [1, 1, 1], bend: [0, 0], twist: 0 },
     lattice: null, // Array(81) of free cage-point offsets
     latticeMirror: true,
+    sculpt: [], // brush strokes, replayed after every re-conversion
   };
 }
 
@@ -78,6 +79,7 @@ export function mergeParams(slot, saved = {}) {
   for (const k of Object.keys(d.align)) out.align[k] = { ...d.align[k], ...(saved.align?.[k] || {}) };
   out.roles = { ...d.roles, ...(saved.roles || {}) };
   out.taper = { ...d.taper, ...(saved.taper || {}) };
+  out.sculpt = Array.isArray(saved.sculpt) ? saved.sculpt : [];
   return out;
 }
 

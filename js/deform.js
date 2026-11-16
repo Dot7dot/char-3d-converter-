@@ -11,6 +11,7 @@
 //   idx = i + 3 * (j + 3 * k); offsets are stored as fractions of the cage size.
 // ---------------------------------------------------------------------------
 import * as THREE from 'three';
+import { replaySculpt } from './sculpt.js';
 
 export const LATTICE_N = 27;
 export const latticeIndex = (i, j, k) => i + 3 * (j + 3 * k);
@@ -22,6 +23,7 @@ export function defaultTaper() {
 export function hasDeform(p) {
   const s = p.stretch || [1, 1, 1];
   if (s.some((v) => Math.abs(v - 1) > 1e-4)) return true;
+  if (p.sculpt && p.sculpt.length) return true;
   return latticeActive(p);
 }
 
@@ -141,13 +143,15 @@ export function ffdInPlace(g, box, offsets) {
 }
 
 /**
- * Full pipeline: base → stretch → lattice. Returns { geometry, cageBox } where
- * cageBox is the box the lattice is defined on (needed to draw the handles).
+ * Full pipeline: base → stretch → lattice → sculpt strokes.
+ * Returns { geometry, cageBox } where cageBox is the box the lattice is defined on.
+ * `topo` (see sculpt.buildTopo) is required for replaying sculpt strokes.
  */
-export function deformPart(base, p) {
+export function deformPart(base, p, topo = null, { sculpt = true } = {}) {
   const stretch = p.stretch || [1, 1, 1];
   const g = stretchGeometry(base, stretch);
   const cageBox = g.boundingBox.clone();
   if (latticeActive(p)) ffdInPlace(g, cageBox, latticeOffsets(p));
+  if (sculpt && topo && p.sculpt && p.sculpt.length) replaySculpt(g, topo, p.sculpt);
   return { geometry: g, cageBox };
 }

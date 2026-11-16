@@ -28,6 +28,7 @@
       <button role="tab" data-mode="object" aria-selected="false">物件</button>
     </div>
     <div class="actions">
+      <button class="btn ghost" id="btnHelp" title="操作說明與快捷鍵">說明</button>
       <button class="btn ghost" id="btnSample" title="載入範例圖片">範例</button>
       <button class="btn ghost" id="btnOpen" title="開啟 .c3d.json 專案">開啟</button>
       <button class="btn ghost" id="btnSave" title="儲存專案">儲存</button>
@@ -60,6 +61,14 @@
               <select id="setAtlas"><option value="512">512</option><option value="1024" selected>1024</option><option value="2048">2048</option></select>
             </label>
           </div>
+          <label class="field" style="margin-top:8px"><span>面數預算（每個部位）</span>
+            <select id="setBudget">
+              <option value="low">低模 · 約 1,500 面（手機 / 大量角色）</option>
+              <option value="game" selected>遊戲 · 約 4,000 面（建議）</option>
+              <option value="high">細緻 · 約 10,000 面</option>
+              <option value="full">原始 · 不減面</option>
+            </select>
+          </label>
           <p class="note">角色採<b>三頭身</b>比例：頭 1 : 胸 1 : 腳 1。沒有上傳的身體部位會以預設形狀顯示。</p>
         </div>
       </section>
@@ -75,8 +84,8 @@
           <li>三視圖的<b>高度要對齊</b>（同一個物件在各視圖中的上下邊界相同）。</li>
           <li>只有正面時，系統會依輪廓自動推算厚度：圓的變球、細的變管、扁的用「擠出」。</li>
           <li>帽子、瓶子等左右對稱的圓形物件，用「旋轉體」最準確。</li>
-          <li>前後或側面圖不完全吻合時，按卡片中的<b>「對齊三視圖…」</b>拖曳、縮放、旋轉各個視圖；或把側面/頂部設為「只當貼圖」，避免它影響形狀。</li>
-          <li>想手動修整形狀：用右上角的<b>移動 / 旋轉 / 縮放 / 控制點</b>工具直接在 3D 中拖曳，或用卡片中的「立體結構調整」滑桿。可用 Ctrl+Z 復原。</li>
+          <li>前後或側面圖不完全吻合時，按卡片中的<b>「對齊三視圖…」</b>拖曳、縮放、旋轉各個視圖；或把側面 / 頂部設為「只當貼圖」。</li>
+          <li>修外形最快的方法：切到<b>正 / 側 / 頂</b>視圖，開啟<b>參考圖</b>，用<b>雕刻 → 拉扯</b>把輪廓拉到和原圖重疊。</li>
         </ol>
       </details>
     </aside>
@@ -88,24 +97,49 @@
           <div class="pill" id="statusPill"><span class="dot"></span><span id="statusText">準備就緒</span></div>
           <div class="pill hint-pill" id="editHint" hidden></div>
         </div>
-        <div class="toolbar" id="editBar" aria-label="編輯工具">
-          <button class="tbtn" data-edit="view" aria-pressed="true" title="檢視 / 播放動畫 (Q)">檢視</button>
-          <button class="tbtn" data-edit="translate" aria-pressed="false" title="移動部位 (W)">移動</button>
-          <button class="tbtn" data-edit="rotate" aria-pressed="false" title="旋轉部位 (E)">旋轉</button>
-          <button class="tbtn" data-edit="scale" aria-pressed="false" title="拉伸寬 / 高 / 深 (R)">縮放</button>
-          <button class="tbtn" data-edit="lattice" aria-pressed="false" title="拖曳控制點自由變形 (T)">控制點</button>
-          <span class="tsep"></span>
-          <button class="tbtn" id="tUndo" title="復原 (Ctrl+Z)" aria-label="復原">↶</button>
-          <button class="tbtn" id="tRedo" title="重做 (Ctrl+Shift+Z)" aria-label="重做">↷</button>
+        <div class="hud-col right">
+          <div class="toolbar" id="editBar" aria-label="編輯工具">
+            <button class="tbtn" data-edit="view" aria-pressed="true" title="檢視 / 播放動畫 (Q)">檢視</button>
+            <button class="tbtn" data-edit="translate" aria-pressed="false" title="移動部位 (W)">移動</button>
+            <button class="tbtn" data-edit="rotate" aria-pressed="false" title="旋轉部位 (E)">旋轉</button>
+            <button class="tbtn" data-edit="scale" aria-pressed="false" title="拉伸寬 / 高 / 深 (R)">縮放</button>
+            <button class="tbtn" data-edit="lattice" aria-pressed="false" title="拖曳變形籠的控制點 (T)">變形籠</button>
+            <button class="tbtn" data-edit="sculpt" aria-pressed="false" title="用筆刷直接捏塑表面 (B)">雕刻</button>
+            <span class="tsep"></span>
+            <button class="tbtn" id="tUndo" title="復原 (Ctrl+Z)" aria-label="復原">↶</button>
+            <button class="tbtn" id="tRedo" title="重做 (Ctrl+Shift+Z)" aria-label="重做">↷</button>
+          </div>
+          <div class="float-panel" id="sculptPanel" hidden>
+            <div class="brushes" id="brushList"></div>
+            <label class="field"><span>筆刷大小 <kbd>[</kbd> <kbd>]</kbd><output id="brushSizeOut"></output></span><input type="range" id="brushSize" min="0.04" max="0.6" step="0.01"></label>
+            <label class="field"><span>強度<output id="brushStrOut"></output></span><input type="range" id="brushStr" min="0.05" max="1" step="0.05"></label>
+            <label class="field check"><input type="checkbox" id="brushSym" checked><span>左右對稱</span></label>
+            <p class="note" id="brushTip"></p>
+            <button class="btn" id="sculptClear">清除這個部位的雕刻</button>
+          </div>
         </div>
       </div>
       <div class="hud bottom">
         <div class="toolbar" id="animBar" aria-label="動畫預覽"></div>
-        <div class="toolbar">
-          <button class="tbtn" id="tWire" aria-pressed="false" title="線框">線框</button>
-          <button class="tbtn" id="tSockets" aria-pressed="false" title="顯示插槽">插槽</button>
-          <button class="tbtn" id="tSpin" aria-pressed="false" title="自動旋轉">旋轉</button>
-          <button class="tbtn" id="tView" title="重設視角">視角</button>
+        <div class="hud-col right">
+          <div class="toolbar" id="viewBar" aria-label="視角">
+            <button class="tbtn" data-preset="persp" aria-pressed="true" title="透視 (0)">透視</button>
+            <button class="tbtn" data-preset="front" aria-pressed="false" title="正視圖 (1)">正</button>
+            <button class="tbtn" data-preset="back" aria-pressed="false" title="背視圖 (2)">背</button>
+            <button class="tbtn" data-preset="right" aria-pressed="false" title="右側視圖：對應你上傳的側面圖 (3)">側</button>
+            <button class="tbtn" data-preset="left" aria-pressed="false" title="左側視圖 (4)">左</button>
+            <button class="tbtn" data-preset="top" aria-pressed="false" title="頂視圖 (5)">頂</button>
+            <span class="tsep"></span>
+            <button class="tbtn" id="tRef" aria-pressed="true" title="在正 / 背 / 側 / 頂視圖中，把你上傳的圖疊在模型上比對">參考圖</button>
+            <input type="range" id="refOpacity" min="0.1" max="1" step="0.05" value="0.5" title="參考圖透明度" aria-label="參考圖透明度">
+          </div>
+          <div class="toolbar">
+            <button class="tbtn" id="tSolo" aria-pressed="false" title="只顯示選取的部位 (H)">單獨</button>
+            <button class="tbtn" id="tWire" aria-pressed="false" title="線框">線框</button>
+            <button class="tbtn" id="tSockets" aria-pressed="false" title="顯示插槽">插槽</button>
+            <button class="tbtn" id="tSpin" aria-pressed="false" title="自動旋轉">旋轉</button>
+            <button class="tbtn" id="tView" title="置中：對準選取部位或整個模型 (F)">置中</button>
+          </div>
         </div>
       </div>
       <div class="drop-overlay" id="dropOverlay">把圖片放到左側部位卡片上</div>
@@ -131,6 +165,36 @@
         <button class="btn ghost" value="cancel">取消</button>
         <button class="btn primary" id="btnDoExport" value="default">下載</button>
       </footer>
+    </form>
+  </dialog>
+
+  <dialog id="helpDlg" class="dialog">
+    <form method="dialog" class="dlg-inner">
+      <header class="dlg-head"><h2>操作說明</h2><button class="icon-btn" value="cancel" aria-label="關閉">✕</button></header>
+      <div class="dlg-body help">
+        <h3>流程</h3>
+        <ol>
+          <li><b>圖片</b>：在部位卡片上傳正面圖（必填），有側面 / 背面 / 頂部就一起放。圖不吻合時按「對齊三視圖」。</li>
+          <li><b>成形</b>：選轉換方式，調厚度、圓潤度。有側面圖時，角色部位預設用「側面輪廓塑形」，即使兩張圖畫得不一致也不會破洞。</li>
+          <li><b>微調</b>：切到正 / 側 / 頂視圖，打開「參考圖」把原圖疊在模型上，再用拉伸、變形籠或雕刻筆刷把外形修到吻合。</li>
+          <li><b>擺放</b>：調整大小、位置、角度。</li>
+          <li><b>匯出</b>：選格式下載。面數預算可在「專案設定」調整。</li>
+        </ol>
+        <h3>快捷鍵</h3>
+        <div class="keys">
+          <span><kbd>Q</kbd> 檢視</span><span><kbd>W</kbd> 移動</span><span><kbd>E</kbd> 旋轉</span><span><kbd>R</kbd> 縮放</span>
+          <span><kbd>T</kbd> 變形籠</span><span><kbd>B</kbd> 雕刻</span><span><kbd>F</kbd> 置中</span><span><kbd>H</kbd> 單獨顯示</span>
+          <span><kbd>0</kbd> 透視</span><span><kbd>1</kbd> 正</span><span><kbd>2</kbd> 背</span><span><kbd>3</kbd> 側</span><span><kbd>4</kbd> 左</span><span><kbd>5</kbd> 頂</span>
+          <span><kbd>Ctrl</kbd>+<kbd>Z</kbd> 復原</span><span><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Z</kbd> 重做</span>
+        </div>
+        <h3>雕刻</h3>
+        <div class="keys">
+          <span><kbd>G</kbd> 拉扯</span><span><kbd>I</kbd> 鼓起</span><span><kbd>D</kbd> 凹陷</span><span><kbd>S</kbd> 平滑</span><span><kbd>L</kbd> 壓平</span>
+          <span><kbd>[</kbd> <kbd>]</kbd> 筆刷大小</span><span>按住 <kbd>Shift</kbd> 平滑</span><span>按住 <kbd>Ctrl</kbd> 反向</span>
+        </div>
+        <p class="note">在模型上拖曳是雕刻；在空白處拖曳是轉動視角，右鍵拖曳平移，滾輪縮放。雕刻會保存下來，之後改厚度或品質也會自動重新套用。編輯內容會自動儲存在這個瀏覽器。</p>
+      </div>
+      <footer class="dlg-foot"><button class="btn primary" value="cancel">知道了</button></footer>
     </form>
   </dialog>
 

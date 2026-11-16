@@ -20,6 +20,7 @@
 import * as THREE from 'three';
 import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
 import { mergeVertices } from 'three/addons/utils/BufferGeometryUtils.js';
+import { simplifyGeometry } from './converter.js';
 
 const D2R = Math.PI / 180;
 
@@ -78,6 +79,32 @@ function splitByX(src) {
   });
 }
 
+// Legs are split at full resolution and each half is reduced on its own, so no
+// simplified triangle ever spans both legs. Cached per source geometry.
+const legCache = new WeakMap();
+function splitLegs(part, budget) {
+  const src = part.full || part.geometry;
+  const hit = legCache.get(src);
+  if (hit && hit.budget === budget) return hit.parts;
+  if (hit) hit.parts.forEach((g) => g && g.dispose());
+  const parts = splitByX(src).map((g) => {
+    if (!g) return null;
+    const out = simplifyGeometry(g, budget, 0.5);
+    if (out !== g) g.dispose();
+    out.userData.cached = true;
+    return out;
+  });
+  legCache.set(src, { budget, parts });
+  return parts;
+}
+
+export function releaseLegCache(src) {
+  const hit = src && legCache.get(src);
+  if (!hit) return;
+  hit.parts.forEach((g) => g && g.dispose());
+  legCache.delete(src);
+}
+
 function dims(geom, s = 1) {
   geom.computeBoundingBox();
   const b = geom.boundingBox;
@@ -102,8 +129,8 @@ function mesh(name, geom, mat, parent) {
  * Remember the layout transform of a user-editable mesh, then apply the slot's
  * manual offset / rotation on top. The viewport gizmo edits these same params.
  */
-function setBase(m, p, { mirror = false, primary = true, live = true } = {}) {
-  m.userData.base = { pos: m.position.toArray(), scale: m.scale.x, mirror, primary, live };
+function setBase(m, p, { mirror = false, primary = true, live = true, flip = false } = {}) {
+  m.userData.base = { pos: m.position.toArray(), scale: Math.abs(m.scale.x), mirror, primary, live, flip };
   m.userData.editable = true;
   applyParamsToMesh(m, p);
 }
@@ -114,7 +141,7 @@ export function applyParamsToMesh(m, p) {
   const sx = b.mirror ? -1 : 1;
   m.position.set(b.pos[0] + p.offset[0] * sx, b.pos[1] + p.offset[1], b.pos[2] + p.offset[2]);
   m.rotation.set(p.rotation[0] * D2R, p.rotation[1] * D2R * sx, p.rotation[2] * D2R * sx);
-  m.scale.setScalar(b.scale);
+  m.scale.set(b.scale * (b.flip ? -1 : 1), b.scale, b.scale);
 }
 
 /** Inverse of applyParamsToMesh: read offset / rotation back from a moved mesh. */
@@ -140,7 +167,8 @@ function defaultParts(colors) {
 
 /**
  * @param parts   map slotId → { geometry, material, params, slot } (converted) — missing = default/none
- * @param settings { name, colors: {skin, shirt, pants}, mode: 'character'|'object' }
+ * @param settings { name, colors: {skin, shirt, pants}, mode: 'character'|'object',
+ *                   live?: preview build (pairs share geometry), editSlot?: slot being edited (legs stay unsplit) }
  */
 export function buildCharacter(parts, settings) {
   const safeName = (settings.name || 'Character').replace(/[^\w-]+/g, '_') || 'Character';
@@ -150,6 +178,8 @@ export function buildCharacter(parts, settings) {
   const pickable = [];
   const tag = (m, slot) => { m.userData.slot = slot; pickable.push(m); return m; };
   const P = (id) => parts[id] && parts[id].params.visible ? parts[id] : null;
+  // live preview: mirrored pairs share one geometry (flipped by scale) so edits show on both sides
+  const live = !!settings.live;
 
   if (settings.mode === 'object') {
     const prop = node('Prop', root);
@@ -172,12 +202,23 @@ export function buildCharacter(parts, settings) {
     const s = legsP.params.size;
     const d = dims(legsP.geometry, s);
     legH = d.h; legW = d.w;
-    if (legsP.params.splitLegs) {
-      const [r, l] = splitByX(legsP.geometry);
+    if (legsP.params.splitLegs && settings.editSlot !== 'legs') {
+      const [r, l] = splitLegs(legsP, settings.budget);
       legParts = [r, l];
+      // area-weighted centre of each half (robust even when a few large triangles span both legs)
       legCenters = [r, l].map((g, i) => {
-        if (!g) return (i ? 1 : -1) * d.w / 4;
-        const dd = dims(g, s); return (dd.box.min.x + dd.box.max.x) / 2 * s;
+        const fallback = (i ? 1 : -1) * d.w / 4;
+        if (!g) return fallback;
+        const p = g.getAttribute('position'), ix = g.index.array;
+        const a = new THREE.Vector3(), b = new THREE.Vector3(), c = new THREE.Vector3();
+        let sum = 0, area = 0;
+        for (let t = 0; t < ix.length; t += 3) {
+          a.fromBufferAttribute(p, ix[t]); b.fromBufferAttribute(p, ix[t + 1]); c.fromBufferAttribute(p, ix[t + 2]);
+          const w = b.sub(a).cross(c.sub(a)).length();
+          sum += (a.x * 3 + b.x + c.x) / 3 * w; area += w; // b, c are now edge vectors relative to a
+        }
+        const cx = area ? (sum / area) * s : fallback;
+        return (i ? Math.max(cx, d.w * 0.08) : Math.min(cx, -d.w * 0.08));
       });
     } else { legParts = null; legCenters = [-d.w / 4, d.w / 4]; }
   } else { legH = 1.0 * 0.98; legW = 0.66; legCenters = [-0.17, 0.17]; }
@@ -255,7 +296,7 @@ export function buildCharacter(parts, settings) {
   if (armsP) {
     const s = armsP.params.size * armsP.slot.size;
     A = dims(armsP.geometry, s);
-    armGeoms = [armsP.geometry, mirrorGeometry(armsP.geometry)];
+    armGeoms = [armsP.geometry, live ? armsP.geometry : mirrorGeometry(armsP.geometry)];
     armMat = armsP.material;
   } else {
     A = { w: 0.26, h: 0.82, d: 0.26 };
@@ -270,7 +311,7 @@ export function buildCharacter(parts, settings) {
     if (armsP) {
       const m = tag(mesh(i ? 'Arm_L_Mesh' : 'Arm_R_Mesh', armGeoms[i], armMat, a), 'arms');
       m.scale.setScalar(armsP.params.size * armsP.slot.size); m.position.y = -A.h * 0.94;
-      setBase(m, armsP.params, { mirror: i === 1, primary: i === 0 });
+      setBase(m, armsP.params, { mirror: i === 1, primary: i === 0, flip: live && i === 1 });
     } else {
       const m = tag(mesh(i ? 'Arm_L_Mesh' : 'Arm_R_Mesh', D.arm, D.shirt, a), 'arms');
       m.position.y = -0.8;
@@ -332,11 +373,11 @@ export function buildCharacter(parts, settings) {
   const shoes = P('shoes');
   if (shoes) {
     const { s, d } = fit(shoes, eachLegW * shoes.slot.size);
-    const geoms = [shoes.geometry, mirrorGeometry(shoes.geometry)];
+    const geoms = [shoes.geometry, live ? shoes.geometry : mirrorGeometry(shoes.geometry)];
     [sockets.footR, sockets.footL].forEach((sock, i) => {
       const m = tag(mesh(i ? 'Shoe_L_Mesh' : 'Shoe_R_Mesh', geoms[i], shoes.material, sock), 'shoes');
       m.scale.setScalar(s); m.position.set(0, 0, d.d * s * 0.12);
-      setBase(m, shoes.params, { mirror: i === 1, primary: i === 0 });
+      setBase(m, shoes.params, { mirror: i === 1, primary: i === 0, flip: live && i === 1 });
     });
   }
 
