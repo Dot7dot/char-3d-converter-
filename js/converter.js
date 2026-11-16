@@ -182,10 +182,15 @@ function buildPlane(views, p, atlasSize) {
  * @param p      { mode, depth, roundness, smooth, backFill: 'mirror'|'color', }
  * @param opts   { resolution, atlasSize, slotDefault }
  */
-export function convertPart(views, p, opts) {
-  const F = views.front;
+export function convertPart(allViews, p, opts) {
+  const F = allViews.front;
+  // view roles: side / top can shape the model, texture it, or both
+  const roles = p.roles || {};
+  const use = (id, what) => allViews[id] && (roles[id] || 'both') !== what ? allViews[id] : null;
+  const views = { front: F, side: use('side', 'texture'), top: use('top', 'texture') };          // shape
+  const texViews = { front: F, back: allViews.back || null, side: use('side', 'shape'), top: use('top', 'shape') };
   const mode = resolveMode(p.mode, views, opts.slotDefault);
-  if (mode === 'plane') return buildPlane(views, p, opts.atlasSize);
+  if (mode === 'plane') return buildPlane(texViews, p, opts.atlasSize);
 
   const N = opts.resolution;
   const pad = 2;
@@ -295,13 +300,19 @@ export function convertPart(views, p, opts) {
   const nrm = ig.getAttribute('normal').array;
 
   // ---- texture projection
-  const backFill = views.back ? { type: 'image' }
+  const backFill = texViews.back ? { type: 'image' }
     : p.backFill === 'color' ? { type: 'color', color: F.topColor } : { type: 'mirror' };
-  const atlas = buildAtlas(views, opts.atlasSize, false, backFill);
+  const atlas = buildAtlas(texViews, opts.atlasSize, false, backFill);
   const inset = 1.5 / (opts.atlasSize / 2);
-  const hasSideTex = !!views.side && mode === 'hull';
-  const hasTopTex = !!views.top && mode === 'hull';
-  const zSpan = mode === 'hull' ? cz : 0;
+  const hasSideTex = !!texViews.side;
+  const hasTopTex = !!texViews.top;
+  // z range that the side / top images span: the carving frame, or the mesh depth
+  let zStart = pad - 0.5, zSpan = cz;
+  if (mode !== 'hull') {
+    let lo = Infinity, hi = -Infinity;
+    for (let v = 0; v < vcount; v++) { const z = gp[v * 3 + 2]; if (z < lo) lo = z; if (z > hi) hi = z; }
+    zStart = lo; zSpan = Math.max(1e-3, hi - lo);
+  }
 
   const band = Math.max(cx, cy) * 0.032;
   const sFb = (x, y) => {
@@ -336,8 +347,8 @@ export function convertPart(views, p, opts) {
       if (best === 'front') uv = cellUV(CELL.front, uF, vF, inset);
       else if (best === 'back') uv = backFill.type === 'mirror' ? cellUV(CELL.front, uF, vF, inset) : cellUV(CELL.back, 1 - uF, vF, inset);
       else if (best === 'core') uv = cellUV(CELL.side, uF, vF, inset);
-      else if (best === 'side') uv = cellUV(CELL.side, (gz + 0.5 - pad) / zSpan, vF, inset);
-      else uv = cellUV(CELL.top, uF, (gz + 0.5 - pad) / zSpan, inset);
+      else if (best === 'side') uv = cellUV(CELL.side, (gz - zStart) / zSpan, vF, inset);
+      else uv = cellUV(CELL.top, uF, (gz - zStart) / zSpan, inset);
       P[t * 9 + s * 3] = local[vi * 3]; P[t * 9 + s * 3 + 1] = local[vi * 3 + 1]; P[t * 9 + s * 3 + 2] = local[vi * 3 + 2];
       Nn[t * 9 + s * 3] = nrm[vi * 3]; Nn[t * 9 + s * 3 + 1] = nrm[vi * 3 + 1]; Nn[t * 9 + s * 3 + 2] = nrm[vi * 3 + 2];
       UV[t * 6 + s * 2] = uv[0]; UV[t * 6 + s * 2 + 1] = uv[1];

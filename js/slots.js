@@ -55,8 +55,34 @@ export function defaultParams(slot) {
     rotation: [0, 0, 0],
     visible: true,
     splitLegs: true,
+    // --- view alignment (per optional view, in the view's own frame) & roles
+    align: {
+      back: { dx: 0, dy: 0, sx: 1, sy: 1, rot: 0 },
+      side: { dx: 0, dy: 0, sx: 1, sy: 1, rot: 0 },
+      top: { dx: 0, dy: 0, sx: 1, sy: 1, rot: 0 },
+    },
+    roles: { side: 'both', top: 'both' }, // 'both' | 'shape' | 'texture'
+    // --- manual 3D adjustment
+    stretch: [1, 1, 1],
+    taper: { w: [1, 1, 1], d: [1, 1, 1], bend: [0, 0], twist: 0 },
+    lattice: null, // Array(81) of free cage-point offsets
+    latticeMirror: true,
   };
 }
+
+/** Merge saved params over defaults (older project files lack the newer keys). */
+export function mergeParams(slot, saved = {}) {
+  const d = defaultParams(slot);
+  const out = { ...d, ...saved };
+  out.align = { ...d.align };
+  for (const k of Object.keys(d.align)) out.align[k] = { ...d.align[k], ...(saved.align?.[k] || {}) };
+  out.roles = { ...d.roles, ...(saved.roles || {}) };
+  out.taper = { ...d.taper, ...(saved.taper || {}) };
+  return out;
+}
+
+/** Params that change the conversion itself (others only re-deform / re-place). */
+export const CONVERT_KEYS = ['mode', 'depth', 'roundness', 'smooth', 'backFill', 'removeBg', 'tolerance', 'align', 'roles'];
 
 // simple inline SVG icons (stroke = currentColor)
 export const ICONS = {

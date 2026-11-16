@@ -98,11 +98,32 @@ function mesh(name, geom, mat, parent) {
   return m;
 }
 
-function applyUserTransform(obj, p, mirrorX = false) {
-  obj.position.x += p.offset[0] * (mirrorX ? -1 : 1);
-  obj.position.y += p.offset[1];
-  obj.position.z += p.offset[2];
-  obj.rotation.set(p.rotation[0] * D2R, p.rotation[1] * D2R * (mirrorX ? -1 : 1), p.rotation[2] * D2R * (mirrorX ? -1 : 1));
+/**
+ * Remember the layout transform of a user-editable mesh, then apply the slot's
+ * manual offset / rotation on top. The viewport gizmo edits these same params.
+ */
+function setBase(m, p, { mirror = false, primary = true, live = true } = {}) {
+  m.userData.base = { pos: m.position.toArray(), scale: m.scale.x, mirror, primary, live };
+  m.userData.editable = true;
+  applyParamsToMesh(m, p);
+}
+
+export function applyParamsToMesh(m, p) {
+  const b = m.userData.base;
+  if (!b) return;
+  const sx = b.mirror ? -1 : 1;
+  m.position.set(b.pos[0] + p.offset[0] * sx, b.pos[1] + p.offset[1], b.pos[2] + p.offset[2]);
+  m.rotation.set(p.rotation[0] * D2R, p.rotation[1] * D2R * sx, p.rotation[2] * D2R * sx);
+  m.scale.setScalar(b.scale);
+}
+
+/** Inverse of applyParamsToMesh: read offset / rotation back from a moved mesh. */
+export function paramsFromMesh(m, p) {
+  const b = m.userData.base;
+  const sx = b.mirror ? -1 : 1;
+  const r = (v) => Math.round(v * 1000) / 1000;
+  p.offset = [r((m.position.x - b.pos[0]) * sx), r(m.position.y - b.pos[1]), r(m.position.z - b.pos[2])];
+  p.rotation = [r(m.rotation.x / D2R), r(m.rotation.y / D2R * sx), r(m.rotation.z / D2R * sx)];
 }
 
 // ----------------------------------------------------------- defaults
@@ -137,7 +158,7 @@ export function buildCharacter(parts, settings) {
       const s = part.params.size;
       const m = tag(mesh('Prop_Mesh', part.geometry, part.material, prop), 'object');
       m.scale.setScalar(s);
-      applyUserTransform(m, part.params);
+      setBase(m, part.params);
     }
     return { root, sockets, pickable, clips: makePropClips(), height: part ? dims(part.geometry, part.params.size).h : 1 };
   }
@@ -171,12 +192,12 @@ export function buildCharacter(parts, settings) {
         if (!g) return;
         const m = tag(mesh(i ? 'Leg_L_Mesh' : 'Leg_R_Mesh', g, legsP.material, legNodes[i]), 'legs');
         m.scale.setScalar(s); m.position.set(-legCenters[i], -hipsY, 0);
-        applyUserTransform(m, legsP.params);
+        setBase(m, legsP.params, { primary: i === 0, live: false });
       });
     } else {
       const m = tag(mesh('Legs_Mesh', legsP.geometry, legsP.material, hips), 'legs');
       m.scale.setScalar(s); m.position.set(0, -hipsY, 0);
-      applyUserTransform(m, legsP.params);
+      setBase(m, legsP.params);
     }
   } else {
     legNodes.forEach((n, i) => {
@@ -195,7 +216,7 @@ export function buildCharacter(parts, settings) {
     T = dims(torsoP.geometry, s);
     const m = tag(mesh('Torso_Mesh', torsoP.geometry, torsoP.material, torso), 'torso');
     m.scale.setScalar(s); m.position.y = -0.06;
-    applyUserTransform(m, torsoP.params);
+    setBase(m, torsoP.params);
   } else {
     T = dims(D.torso);
     const m = tag(mesh('Torso_Mesh', D.torso, D.shirt, torso), 'torso');
@@ -213,7 +234,7 @@ export function buildCharacter(parts, settings) {
     Hd = dims(headP.geometry, s);
     const m = tag(mesh('Head_Mesh', headP.geometry, headP.material, head), 'head');
     m.scale.setScalar(s); m.position.y = -0.04;
-    applyUserTransform(m, headP.params);
+    setBase(m, headP.params);
   } else {
     Hd = dims(D.head);
     const m = tag(mesh('Head_Mesh', D.head, D.skin, head), 'head');
@@ -249,7 +270,7 @@ export function buildCharacter(parts, settings) {
     if (armsP) {
       const m = tag(mesh(i ? 'Arm_L_Mesh' : 'Arm_R_Mesh', armGeoms[i], armMat, a), 'arms');
       m.scale.setScalar(armsP.params.size * armsP.slot.size); m.position.y = -A.h * 0.94;
-      applyUserTransform(m, armsP.params, i === 1);
+      setBase(m, armsP.params, { mirror: i === 1, primary: i === 0 });
     } else {
       const m = tag(mesh(i ? 'Arm_L_Mesh' : 'Arm_R_Mesh', D.arm, D.shirt, a), 'arms');
       m.position.y = -0.8;
@@ -276,21 +297,21 @@ export function buildCharacter(parts, settings) {
     const { s, d } = fit(hat, Hd.w * hat.slot.size);
     const m = tag(mesh('Hat_Mesh', hat.geometry, hat.material, sockets.hat), 'hat');
     m.scale.setScalar(s); m.position.y = -d.h * s * 0.3;
-    applyUserTransform(m, hat.params);
+    setBase(m, hat.params);
   }
   const face = P('face');
   if (face) {
     const { s, d } = fit(face, Hd.w * face.slot.size);
     const m = tag(mesh('Face_Mesh', face.geometry, face.material, sockets.face), 'face');
     m.scale.setScalar(s); m.position.set(0, -d.h * s / 2, d.d * s * 0.35);
-    applyUserTransform(m, face.params);
+    setBase(m, face.params);
   }
   const back = P('back');
   if (back) {
     const { s, d } = fit(back, T.h * back.slot.size, 'h');
     const m = tag(mesh('Back_Mesh', back.geometry, back.material, sockets.back), 'back');
     m.scale.setScalar(s); m.position.set(0, -d.h * s * 0.55, d.box.min.z * s * 0.6);
-    applyUserTransform(m, back.params);
+    setBase(m, back.params);
   }
   for (const [id, sock, nm] of [['handR', sockets.handR, 'HandItem_R'], ['handL', sockets.handL, 'HandItem_L']]) {
     const it = P(id);
@@ -299,14 +320,14 @@ export function buildCharacter(parts, settings) {
     const m = tag(mesh(nm + '_Mesh', it.geometry, it.material, sock), id);
     m.scale.setScalar(s);
     m.position.set(0, -d.h * s * it.slot.grip, id === 'handL' ? 0.1 + d.d * s * 0.4 : 0.06);
-    applyUserTransform(m, it.params, id === 'handL');
+    setBase(m, it.params, { mirror: id === 'handL' });
   }
   const waist = P('waist');
   if (waist) {
     const { s, d } = fit(waist, T.w * waist.slot.size);
     const m = tag(mesh('Waist_Mesh', waist.geometry, waist.material, sockets.waist), 'waist');
     m.scale.setScalar(s); m.position.y = 0.12 - d.h * s;
-    applyUserTransform(m, waist.params);
+    setBase(m, waist.params);
   }
   const shoes = P('shoes');
   if (shoes) {
@@ -315,7 +336,7 @@ export function buildCharacter(parts, settings) {
     [sockets.footR, sockets.footL].forEach((sock, i) => {
       const m = tag(mesh(i ? 'Shoe_L_Mesh' : 'Shoe_R_Mesh', geoms[i], shoes.material, sock), 'shoes');
       m.scale.setScalar(s); m.position.set(0, 0, d.d * s * 0.12);
-      applyUserTransform(m, shoes.params, i === 1);
+      setBase(m, shoes.params, { mirror: i === 1, primary: i === 0 });
     });
   }
 
