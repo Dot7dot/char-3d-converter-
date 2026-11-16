@@ -205,6 +205,15 @@ export async function processView(src, { removeBg = true, tolerance = 30, flipX 
 
   const alphaCanvas = makeCanvas(w, h);
   alphaCanvas.getContext('2d').putImageData(crop, 0, 0);
+  return finishView(alphaCanvas, method);
+}
+
+/** Build every derived canvas (mask, bled colours, core) from a cropped RGBA canvas. */
+function finishView(alphaCanvas, method) {
+  const w = alphaCanvas.width, h = alphaCanvas.height;
+  const crop = alphaCanvas.getContext('2d', { willReadFrequently: true }).getImageData(0, 0, w, h);
+  const cmask = new Uint8Array(w * h);
+  for (let i = 0; i < w * h; i++) cmask[i] = crop.data[i * 4 + 3] >= 128 ? 1 : 0;
 
   const maskData = new ImageData(w, h);
   for (let i = 0; i < w * h; i++) {
@@ -224,6 +233,39 @@ export async function processView(src, { removeBg = true, tolerance = 30, flipX 
 
   const coreCanvas = makeCoreCanvas(alphaCanvas);
   return { colorCanvas, alphaCanvas, maskCanvas, coreCanvas, w, h, avgColor, topColor, method };
+}
+
+// ------------------------------------------------------------ view alignment
+export const IDENTITY_ALIGN = { dx: 0, dy: 0, sx: 1, sy: 1, rot: 0 };
+export function isIdentityAlign(t) {
+  return !t || (Math.abs(t.dx) < 1e-4 && Math.abs(t.dy) < 1e-4 && Math.abs(t.sx - 1) < 1e-4 && Math.abs(t.sy - 1) < 1e-4 && Math.abs(t.rot) < 1e-3);
+}
+
+/**
+ * Draw `img` into the rectangle (x, y, w, h) with an alignment transform.
+ * dx/dy are fractions of the rectangle, sx/sy scale about the centre, rot in degrees.
+ */
+export function drawAligned(ctx, img, x, y, w, h, t = IDENTITY_ALIGN) {
+  ctx.save();
+  ctx.translate(x + w * (0.5 + t.dx), y + h * (0.5 + t.dy));
+  ctx.rotate((t.rot * Math.PI) / 180);
+  ctx.scale(t.sx, t.sy);
+  ctx.drawImage(img, -w / 2, -h / 2, w, h);
+  ctx.restore();
+}
+
+/** Return a processed view whose content is moved / scaled / rotated inside its own frame. */
+export function alignView(raw, t) {
+  if (isIdentityAlign(t)) return raw;
+  const c = makeCanvas(raw.w, raw.h);
+  const ctx = c.getContext('2d');
+  ctx.imageSmoothingQuality = 'high';
+  drawAligned(ctx, raw.alphaCanvas, 0, 0, raw.w, raw.h, t);
+  // re-binarise the alpha so the silhouette stays crisp
+  const d = ctx.getImageData(0, 0, raw.w, raw.h);
+  for (let i = 3; i < d.data.length; i += 4) d.data[i] = d.data[i] >= 128 ? 255 : 0;
+  ctx.putImageData(d, 0, 0);
+  return finishView(c, raw.method);
 }
 
 /**

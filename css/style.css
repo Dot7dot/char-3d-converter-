@@ -157,7 +157,7 @@ details.adv .ctrls { margin-top: 8px; }
 
 /* ------------------------------------------------------------ stage HUD */
 .hud { position: absolute; left: 12px; right: 12px; display: flex; justify-content: space-between; gap: 8px; pointer-events: none; flex-wrap: wrap; }
-.hud.top { top: 12px; }
+.hud.top { top: 12px; align-items: flex-start; }
 .hud.bottom { bottom: 12px; align-items: flex-end; }
 .hud > * { pointer-events: auto; }
 .pill { display: inline-flex; align-items: center; gap: 8px; background: var(--surface); border: 1px solid var(--line); border-radius: 99px; padding: 4px 12px; font-size: 12.5px; box-shadow: var(--shadow); max-width: 100%; }
@@ -169,6 +169,41 @@ details.adv .ctrls { margin-top: 8px; }
 .tbtn:hover { background: var(--surface-2); color: var(--text); }
 .tbtn[aria-pressed="true"] { background: var(--accent-soft); color: var(--accent); }
 .drop-overlay { position: absolute; inset: 0; display: none; place-items: center; background: color-mix(in srgb, var(--accent) 12%, transparent); color: var(--accent); font-weight: 600; pointer-events: none; }
+
+.hud-col { display: flex; flex-direction: column; gap: 6px; align-items: flex-start; min-width: 0; }
+.hint-pill { background: var(--accent-soft); color: var(--accent); border-color: transparent; }
+.tsep { width: 1px; background: var(--line); margin: 4px 3px; }
+.tbtn:disabled { opacity: .35; cursor: default; background: transparent; }
+
+/* slot editing extras */
+.view-tools { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 10px; margin-top: 8px; align-items: end; }
+.view-tools > .btn { grid-column: 1 / -1; position: relative; padding: 6px 10px; font-size: 12.5px; }
+.view-tools .field select { padding: 4px 6px; font-size: 12px; }
+.dot-mark { position: absolute; top: 6px; right: 8px; width: 7px; height: 7px; border-radius: 50%; background: var(--accent); }
+.view-tools [hidden], .dot-mark[hidden] { display: none; }
+.edit-row { display: flex; flex-wrap: wrap; gap: 2px; margin-top: 8px; background: var(--surface-2); border-radius: 9px; padding: 3px; }
+.edit-row .tbtn { flex: 1; }
+.sep { font-size: 12px; color: var(--muted); border-top: 1px dashed var(--line); padding-top: 6px; margin-top: 2px; }
+details.adv.shape summary { color: var(--accent); }
+
+/* alignment workbench */
+.align-dlg { width: min(1060px, calc(100vw - 32px)); }
+.align-dlg h2 small { font-weight: 400; color: var(--muted); font-size: 13px; }
+.al-tabs { margin: 10px 18px 0; align-self: flex-start; }
+.al-tabs button:disabled { opacity: .4; cursor: not-allowed; }
+.al-body { display: grid; grid-template-columns: 1fr 250px; gap: 14px; padding: 12px 18px; min-height: 0; }
+.al-stage { position: relative; height: min(520px, calc(100vh - 260px)); min-height: 280px; border-radius: 12px; border: 1px solid var(--line); overflow: hidden;
+  background: repeating-conic-gradient(var(--surface-2) 0 25%, var(--surface) 0 50%) 0 0 / 18px 18px; }
+.al-stage canvas { position: absolute; inset: 0; outline: none; touch-action: none; }
+.al-side { overflow-y: auto; }
+.al-side .row2 { margin-top: 10px; }
+.al-btns { display: flex; gap: 6px; margin-top: 10px; }
+.al-btns .btn { flex: 1; }
+.al-btns [hidden], .al-overlay[hidden] { display: none; }
+@media (max-width: 760px) {
+  .al-body { grid-template-columns: 1fr; }
+  .al-stage { height: 46vh; }
+}
 
 /* ------------------------------------------------------------ dialog */
 .dialog { border: 0; padding: 0; border-radius: 16px; background: var(--surface); color: var(--text); width: min(760px, calc(100vw - 32px)); max-height: calc(100vh - 32px); box-shadow: 0 20px 60px rgb(0 0 0 / .3); }
@@ -197,8 +232,8 @@ details.adv .ctrls { margin-top: 8px; }
 /* ------------------------------------------------------------ mobile */
 @media (max-width: 860px) {
   body { overflow: auto; height: auto; }
-  .layout { grid-template-columns: 1fr; grid-template-rows: 56vh auto; }
-  .stage { order: -1; min-height: 56vh; }
+  .layout { grid-template-columns: 1fr; grid-template-rows: 64vh auto; }
+  .stage { order: -1; min-height: 64vh; }
   .panel { border-right: 0; overflow: visible; padding: 12px 16px; }
   .topbar { padding: 10px 16px; gap: 10px; }
   .brand p { display: none; }
@@ -206,3 +241,5 @@ details.adv .ctrls { margin-top: 8px; }
   .actions .btn { padding: 6px 10px; }
   .hud.bottom { flex-direction: column; align-items: flex-start; }
 }
+
+[hidden] { display: none !important; }

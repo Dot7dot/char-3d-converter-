@@ -75,6 +75,8 @@
           <li>三視圖的<b>高度要對齊</b>（同一個物件在各視圖中的上下邊界相同）。</li>
           <li>只有正面時，系統會依輪廓自動推算厚度：圓的變球、細的變管、扁的用「擠出」。</li>
           <li>帽子、瓶子等左右對稱的圓形物件，用「旋轉體」最準確。</li>
+          <li>前後或側面圖不完全吻合時，按卡片中的<b>「對齊三視圖…」</b>拖曳、縮放、旋轉各個視圖；或把側面/頂部設為「只當貼圖」，避免它影響形狀。</li>
+          <li>想手動修整形狀：用右上角的<b>移動 / 旋轉 / 縮放 / 控制點</b>工具直接在 3D 中拖曳，或用卡片中的「立體結構調整」滑桿。可用 Ctrl+Z 復原。</li>
         </ol>
       </details>
     </aside>
@@ -82,7 +84,20 @@
     <section class="stage">
       <div id="viewport" class="viewport"></div>
       <div class="hud top">
-        <div class="pill" id="statusPill"><span class="dot"></span><span id="statusText">準備就緒</span></div>
+        <div class="hud-col">
+          <div class="pill" id="statusPill"><span class="dot"></span><span id="statusText">準備就緒</span></div>
+          <div class="pill hint-pill" id="editHint" hidden></div>
+        </div>
+        <div class="toolbar" id="editBar" aria-label="編輯工具">
+          <button class="tbtn" data-edit="view" aria-pressed="true" title="檢視 / 播放動畫 (Q)">檢視</button>
+          <button class="tbtn" data-edit="translate" aria-pressed="false" title="移動部位 (W)">移動</button>
+          <button class="tbtn" data-edit="rotate" aria-pressed="false" title="旋轉部位 (E)">旋轉</button>
+          <button class="tbtn" data-edit="scale" aria-pressed="false" title="拉伸寬 / 高 / 深 (R)">縮放</button>
+          <button class="tbtn" data-edit="lattice" aria-pressed="false" title="拖曳控制點自由變形 (T)">控制點</button>
+          <span class="tsep"></span>
+          <button class="tbtn" id="tUndo" title="復原 (Ctrl+Z)" aria-label="復原">↶</button>
+          <button class="tbtn" id="tRedo" title="重做 (Ctrl+Shift+Z)" aria-label="重做">↷</button>
+        </div>
       </div>
       <div class="hud bottom">
         <div class="toolbar" id="animBar" aria-label="動畫預覽"></div>
