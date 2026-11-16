@@ -1,0 +1,126 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Char3D Converter · 2D 轉 3D 角色引擎</title>
+  <meta name="description" content="上傳 2D 圖片，轉換成可用於 Web Game 的 3D 三頭身角色或物件，支援 GLB / glTF / OBJ / STL / USDZ / Sprite Sheet / 遊戲 ZIP 套件匯出。">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Crect width='24' height='24' rx='6' fill='%235b6cff'/%3E%3Ccircle cx='12' cy='8' r='4' fill='white'/%3E%3Crect x='8.5' y='12.5' width='7' height='5' rx='1.5' fill='white'/%3E%3Crect x='9' y='18' width='2.4' height='3' fill='white'/%3E%3Crect x='12.6' y='18' width='2.4' height='3' fill='white'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="css/style.css">
+  <script type="importmap">
+  { "imports": {
+      "three": "./vendor/three/three.module.js",
+      "three/addons/": "./vendor/three/addons/"
+  } }
+  </script>
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <span class="logo" aria-hidden="true"></span>
+      <div>
+        <h1>Char3D Converter</h1>
+        <p>2D 圖片 → 3D 遊戲角色 / 物件</p>
+      </div>
+    </div>
+    <div class="seg" role="tablist" aria-label="模式">
+      <button role="tab" data-mode="character" aria-selected="true">角色</button>
+      <button role="tab" data-mode="object" aria-selected="false">物件</button>
+    </div>
+    <div class="actions">
+      <button class="btn ghost" id="btnSample" title="載入範例圖片">範例</button>
+      <button class="btn ghost" id="btnOpen" title="開啟 .c3d.json 專案">開啟</button>
+      <button class="btn ghost" id="btnSave" title="儲存專案">儲存</button>
+      <button class="btn ghost" id="btnReset" title="清除全部">清除</button>
+      <button class="btn primary" id="btnExport">匯出</button>
+      <input type="file" id="fileProject" accept=".json,.c3d.json,application/json" hidden>
+    </div>
+  </header>
+
+  <main class="layout">
+    <aside class="panel" id="panel">
+      <section class="settings card" id="settingsCard">
+        <button class="card-head" data-toggle>
+          <span class="ico"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="12" cy="12" r="3"/><path d="M19 12a7 7 0 0 0-.1-1.2l2-1.6-2-3.4-2.4 1a7 7 0 0 0-2-1.2L14 3h-4l-.5 2.6a7 7 0 0 0-2 1.2l-2.4-1-2 3.4 2 1.6A7 7 0 0 0 5 12c0 .4 0 .8.1 1.2l-2 1.6 2 3.4 2.4-1a7 7 0 0 0 2 1.2L10 21h4l.5-2.6a7 7 0 0 0 2-1.2l2.4 1 2-3.4-2-1.6c.1-.4.1-.8.1-1.2z"/></svg></span>
+          <span class="title">專案設定</span>
+          <span class="chev"></span>
+        </button>
+        <div class="card-body">
+          <label class="field"><span>名稱</span><input type="text" id="setName" value="MyHero" maxlength="40"></label>
+          <div class="row3">
+            <label class="field"><span>膚色</span><input type="color" id="setSkin" value="#ffd9bf"></label>
+            <label class="field"><span>預設上衣</span><input type="color" id="setShirt" value="#6c8cff"></label>
+            <label class="field"><span>預設褲子</span><input type="color" id="setPants" value="#3a3f58"></label>
+          </div>
+          <div class="row2">
+            <label class="field"><span>轉換品質</span>
+              <select id="setQuality"><option value="low">低（快速）</option><option value="medium" selected>中（建議）</option><option value="high">高（細緻）</option></select>
+            </label>
+            <label class="field"><span>貼圖解析度</span>
+              <select id="setAtlas"><option value="512">512</option><option value="1024" selected>1024</option><option value="2048">2048</option></select>
+            </label>
+          </div>
+          <p class="note">角色採<b>三頭身</b>比例：頭 1 : 胸 1 : 腳 1。沒有上傳的身體部位會以預設形狀顯示。</p>
+        </div>
+      </section>
+
+      <div id="slotGroups"></div>
+
+      <details class="guide">
+        <summary>繪圖與三視圖指南</summary>
+        <ol>
+          <li>建議使用<b>透明背景 PNG</b>；純色背景也會自動去背（可調容差）。</li>
+          <li>每個部位只畫那個部位，置中、不要留太多空白。</li>
+          <li><b>正面</b>必填；<b>側面</b>（角色面朝畫面右側）讓深度完全依照你的設計；<b>背面</b>提供背後貼圖；<b>頂部</b>（正面朝畫面下方）修正寬深。</li>
+          <li>三視圖的<b>高度要對齊</b>（同一個物件在各視圖中的上下邊界相同）。</li>
+          <li>只有正面時，系統會依輪廓自動推算厚度：圓的變球、細的變管、扁的用「擠出」。</li>
+          <li>帽子、瓶子等左右對稱的圓形物件，用「旋轉體」最準確。</li>
+        </ol>
+      </details>
+    </aside>
+
+    <section class="stage">
+      <div id="viewport" class="viewport"></div>
+      <div class="hud top">
+        <div class="pill" id="statusPill"><span class="dot"></span><span id="statusText">準備就緒</span></div>
+      </div>
+      <div class="hud bottom">
+        <div class="toolbar" id="animBar" aria-label="動畫預覽"></div>
+        <div class="toolbar">
+          <button class="tbtn" id="tWire" aria-pressed="false" title="線框">線框</button>
+          <button class="tbtn" id="tSockets" aria-pressed="false" title="顯示插槽">插槽</button>
+          <button class="tbtn" id="tSpin" aria-pressed="false" title="自動旋轉">旋轉</button>
+          <button class="tbtn" id="tView" title="重設視角">視角</button>
+        </div>
+      </div>
+      <div class="drop-overlay" id="dropOverlay">把圖片放到左側部位卡片上</div>
+    </section>
+  </main>
+
+  <dialog id="exportDlg" class="dialog">
+    <form method="dialog" class="dlg-inner">
+      <header class="dlg-head">
+        <h2>匯出</h2>
+        <button class="icon-btn" value="cancel" aria-label="關閉">✕</button>
+      </header>
+      <div class="dlg-body">
+        <div class="formats" id="formatList"></div>
+        <div class="row3 export-opts">
+          <label class="field"><span>檔名</span><input type="text" id="expName" value="MyHero"></label>
+          <label class="field"><span id="expHeightLabel">角色身高（公尺）</span><input type="number" id="expHeight" value="1.0" min="0.05" max="100" step="0.05"></label>
+          <label class="field check"><input type="checkbox" id="expAnim" checked><span>包含動畫</span></label>
+        </div>
+        <p class="note" id="expInfo"></p>
+      </div>
+      <footer class="dlg-foot">
+        <button class="btn ghost" value="cancel">取消</button>
+        <button class="btn primary" id="btnDoExport" value="default">下載</button>
+      </footer>
+    </form>
+  </dialog>
+
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+  <script type="module" src="js/main.js"></script>
+</body>
+</html>
