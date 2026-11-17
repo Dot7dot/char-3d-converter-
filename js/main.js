@@ -15,6 +15,8 @@ import * as SC from './sculpt.js';
 import { openAlignEditor } from './align.js';
 import * as EX from './exporter.js';
 import { characterSamples, objectSample } from './samples.js';
+import { createLibrary } from './library.js';
+import { initLibraryUI } from './library-ui.js';
 
 const $ = (s, el = document) => el.querySelector(s);
 const $$ = (s, el = document) => [...el.querySelectorAll(s)];
@@ -1049,6 +1051,14 @@ const rangeHTML = (p, [path, label, min, max, step], cls = '') => `
   <label class="field ${cls}"><span>${label}<output>${getPath(p, path)}</output></span>
   <input type="range" data-path="${path}" min="${min}" max="${max}" step="${step}" value="${getPath(p, path)}"></label>`;
 
+/** Slider + number box for one value. Both carry the same data-path and are kept in sync by onParamInput /
+ *  syncCardInputs. The number box has no min / max on purpose: typing past the slider's range is allowed
+ *  (the slider just stops at its end). */
+const sliderRow = (p, path, label, min, max, step) => `
+  <div class="srow"><span class="ax">${label}</span>
+    <input type="range" data-path="${path}" min="${min}" max="${max}" step="${step}" value="${getPath(p, path)}" aria-label="${label}">
+    <input type="number" data-path="${path}" step="${step}" value="${getPath(p, path)}" aria-label="${label}（可直接輸入數字）"></div>`;
+
 function renderSlots() {
   const wrap = $('#slotGroups');
   const groups = state.mode === 'object'
@@ -1067,7 +1077,8 @@ function cardHTML(s) {
   const autoName = (k) => MODES[k].split(' ')[0];
   const modeOpts = Object.entries(MODES).map(([k, v]) => `<option value="${k}" ${p.mode === k ? 'selected' : ''}>${k === 'auto' ? `${v}（無側面：${autoName(s.mode)}／有側面：${autoName(s.sideMode || 'hull')}）` : v}</option>`).join('');
   const roleSel = (vid, name) => `<label class="field" data-role="${vid}"><span>${name}圖用途</span><select data-path="roles.${vid}">${ROLE_OPTS.map(([k, t]) => `<option value="${k}" ${p.roles[vid] === k ? 'selected' : ''}>${t}</option>`).join('')}</select></label>`;
-  const vec = (key, step) => `<div class="vec">${[0, 1, 2].map((i) => `<input type="number" step="${step}" data-path="${key}.${i}" value="${p[key][i]}" aria-label="${key} ${'XYZ'[i]}">`).join('')}</div>`;
+  // placement: one row per value (label · slider · typed number); offset in head units, rotation in degrees
+  const vec = (key, label, min, max, step) => `<div class="field full"><span>${label}</span>${[0, 1, 2].map((i) => sliderRow(p, `${key}.${i}`, 'XYZ'[i], min, max, step)).join('')}</div>`;
   return `
   <section class="card slot ${st.open ? 'open' : ''}" data-slot="${s.id}">
     <div class="card-head slot-head">
@@ -1156,9 +1167,9 @@ function cardHTML(s) {
           <button type="button" data-goedit="rotate" title="在 3D 中拖曳旋轉 (E)">在 3D 中旋轉</button>
         </div>
         <div class="ctrls">
-          ${rangeHTML(p, ['size', '大小', 0.3, 2.5, 0.05], 'full')}
-          <div class="field full"><span>位置偏移 X / Y / Z（頭身單位）</span>${vec('offset', 0.05)}</div>
-          <div class="field full"><span>旋轉 X / Y / Z（度）</span>${vec('rotation', 5)}</div>
+          <div class="field full"><span>大小</span>${sliderRow(p, 'size', '大小', 0.3, 2.5, 0.05)}</div>
+          ${vec('offset', '位置偏移（頭身單位）', -1.5, 1.5, 0.01)}
+          ${vec('rotation', '旋轉（度）', -180, 180, 1)}
           ${s.id === 'legs' ? `<label class="field check full"><input type="checkbox" data-path="splitLegs" ${p.splitLegs ? 'checked' : ''}><span>左右腿分開（走路動畫各自擺動）</span></label>` : ''}
           <div class="full btn-row"><button type="button" class="btn small" data-act="reset-place">重設大小、位置與旋轉</button></div>
         </div>
@@ -1178,8 +1189,11 @@ function onParamInput(id, path, el, final) {
   if (el.type === 'checkbox') v = el.checked;
   else if (el.type === 'range' || el.type === 'number') { v = parseFloat(el.value); if (!Number.isFinite(v)) return; }
   else v = el.value;
+  if (path === 'size') { v = Math.max(0.05, v); if (final && String(v) !== el.value) el.value = v; } // 0 would collapse the part
   setPath(p, path, v);
   const o = el.parentElement.querySelector('output'); if (o) o.textContent = el.value;
+  // slider and number box of the same value mirror each other (an out-of-range number just pins the slider)
+  for (const twin of el.closest('.card').querySelectorAll(`[data-path="${path}"]`)) if (twin !== el) twin.value = el.value;
   const key = path.split('.')[0];
   if (CONVERT_KEYS.includes(key)) {
     if (final || el.type !== 'range') scheduleConvert(id, key === 'tolerance' ? 250 : 120);
@@ -1374,6 +1388,7 @@ const viewTitle = (id, vid) => `${SLOT_BY_ID[id].name} · ${VIEWS.find((v) => v.
 
 /** A new photo / file for a view: crop first, then convert. */
 async function setView(id, vid, file) {
+  if (restoring) { toast('還原上次的編輯中，請稍候'); return; }
   try {
     const photo = fitCanvas(await loadImage(file), 2048); // crop at high resolution, store smaller
     const out = await openCropper({ source: photo, title: viewTitle(id, vid) });
@@ -1503,6 +1518,9 @@ function setMode(mode) {
 // ============================================================== samples / project / autosave
 $('#btnHelp').addEventListener('click', () => $('#helpDlg').showModal());
 $('#btnSample').addEventListener('click', async () => {
+  if (restoring) return;
+  if (!(await lib.leaveLinked())) return; // same questions as 新角色: a saved / unsaved character is never replaced silently
+  projectGen++;
   flushSculpt();
   const set = state.mode === 'object' ? objectSample() : characterSamples();
   for (const [id, views] of Object.entries(set)) {
@@ -1529,18 +1547,11 @@ function projectData() {
   }
   return { format: 'char3d-project', version: 3, savedAt: new Date().toISOString(), mode: state.mode, settings: state.settings, slots };
 }
-$('#btnSave').addEventListener('click', () => {
-  const json = JSON.stringify(projectData());
-  EX.download(new Blob([json], { type: 'application/json' }), `${safeFile(state.settings.name)}.c3d.json`);
-  toast('專案已儲存');
-});
-$('#btnOpen').addEventListener('click', () => $('#fileProject').click());
-$('#fileProject').addEventListener('change', async (e) => {
-  const f = e.target.files[0]; e.target.value = '';
-  if (!f) return;
-  try { await loadProject(JSON.parse(await f.text())); toast('專案已開啟'); } catch (err) { toast('無法開啟專案：' + err.message); }
-});
+/** Counts how often the current project was replaced (new / sample / open / restore). The library UI uses it so a
+ *  slow async step can never link, or auto-save, a project that is no longer the one it started with. */
+let projectGen = 0;
 async function loadProject(data) {
+  projectGen++;
   if (data.format !== 'char3d-project') throw new Error('不是 Char3D 專案檔');
   dropSculptSession();
   for (const s of SLOTS) { disposePart(state.slots[s.id]); state.slots[s.id] = freshSlot(s); }
@@ -1564,18 +1575,22 @@ async function loadProject(data) {
   await Promise.all(SLOTS.filter((s) => state.slots[s.id].views.front).map((s) => convertSlot(s.id)));
   frame();
 }
-$('#btnReset').addEventListener('click', () => {
-  if (!confirm('確定清除所有上傳的圖片與設定？')) return;
+/** A blank character (asked-for-confirmation and unlinking are done by the library UI before this runs). */
+function newProject() {
+  projectGen++;
   dropSculptSession();
   for (const s of SLOTS) { disposePart(state.slots[s.id]); state.slots[s.id] = freshSlot(s); }
   state.slots[state.mode === 'object' ? 'object' : 'head'].open = true;
   state.selected = null;
+  const dn = state.mode === 'object' ? 'MyProp' : 'MyHero'; // same defaults the export dialog uses
+  state.settings.name = dn; $('#setName').value = $('#expName').value = dn;
   clearHistory();
   renderSlots(); assemble({ keepCamera: false });
   autosaveClear();
-});
+}
 
 // autosave to IndexedDB so a refresh never loses work
+// the draft database is unchanged from the live site (v1, store `kv`); the library keeps its own database
 const idb = () => new Promise((res, rej) => {
   const rq = indexedDB.open('char3d', 1);
   rq.onupgradeneeded = () => rq.result.createObjectStore('kv');
@@ -1589,10 +1604,18 @@ async function idbOp(mode, fn) {
   });
 }
 let saveTimer = null, autosaveOn = false;
+let lib = null; // library UI controller (set at boot)
+/** The draft also remembers which library entry it belongs to, so a reload continues the same entry. */
+function draftData() {
+  const linked = lib && lib.linked;
+  return linked ? { ...projectData(), libraryId: linked.id, libraryName: linked.name } : projectData();
+}
+function writeDraft() { return idbOp('readwrite', (s) => s.put(draftData(), 'autosave')).catch(() => {}); }
 function touch() {
+  if (lib) lib.markDirty();
   if (!autosaveOn) return;
   clearTimeout(saveTimer);
-  saveTimer = setTimeout(() => { idbOp('readwrite', (s) => s.put(projectData(), 'autosave')).catch(() => {}); }, 1200);
+  saveTimer = setTimeout(writeDraft, 1200);
 }
 function autosaveClear() { clearTimeout(saveTimer); idbOp('readwrite', (s) => s.delete('autosave')).catch(() => {}); }
 
@@ -1770,17 +1793,45 @@ state.slots.head.open = true;
 renderSlots();
 updateUndoButtons();
 assemble({ keepCamera: false });
+// While the last draft is being restored, actions that replace the project wait (see library-ui.js: projectGen)
+let restoring = true;
+const RESTORE_LOCK = ['#btnNew', '#btnSample', '#btnLibrary', '#btnSave'];
+const lockRestore = (on) => { restoring = on; for (const sel of RESTORE_LOCK) $(sel).disabled = on; };
+lockRestore(true);
+const library = createLibrary();
+lib = initLibraryUI({
+  library,
+  getProject: projectData,
+  openProject: (data) => { const p = loadProject(data); const gen = projectGen; return p.then(() => gen); }, // → generation it created
+  generation: () => projectGen,
+  invalidate: () => { projectGen++; },
+  isRestoring: () => restoring,
+  newProject,
+  getThumb: previewCanvas,
+  hasContent: () => Object.keys(projectData().slots).length > 0,
+  getName: () => state.settings.name,
+  setName: (n) => { state.settings.name = n; $('#setName').value = n; $('#expName').value = n; touch(); },
+  flushDraft: () => { if (autosaveOn) { clearTimeout(saveTimer); writeDraft(); } },
+  writeDraft, // right now, whatever the state: used when the library link changes
+  toast,
+  download: EX.download,
+});
 window.__c3d = {
   state, scene, tc, SC, get camera() { return cam; }, get current() { return current; }, get latticeUI() { return latticeUI; }, get sc() { return sc; },
-  convertSlot, loadProject, doExport, resolveMode, setEdit, setPreset, selectSlot, undo, redo, commit, applyDeform, assemble, flushSculpt, slotMeshes, totalTris,
+  history, library, get lib() { return lib; }, convertSlot, loadProject, doExport, resolveMode, setEdit, setPreset, selectSlot, undo, redo, commit, applyDeform, assemble, flushSculpt, slotMeshes, totalTris,
 };
 (async () => {
   try {
+    await lib.ready;
     const saved = new URLSearchParams(location.search).has('fresh') ? null : await idbOp('readonly', (s) => s.get('autosave'));
     if (saved && Object.values(saved.slots || {}).some((s) => s.views && s.views.front)) {
-      await loadProject(saved);
-      toast('已還原上次的編輯（按「清除」可重新開始）', 3600);
+      const p = loadProject(saved); const gen = projectGen;
+      await p;
+      const linked = await lib.restoreLink({ id: saved.libraryId, name: saved.libraryName, gen });
+      toast(linked ? `已還原上次的編輯：「${lib.linked.name}」` : '已還原上次的編輯（按「新角色」可重新開始）', 3600);
     }
   } catch (e) { console.warn('autosave restore failed', e); }
   autosaveOn = true;
+  lockRestore(false);
+  lib.afterRestore();
 })();
