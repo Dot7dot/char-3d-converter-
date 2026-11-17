@@ -1049,6 +1049,14 @@ const rangeHTML = (p, [path, label, min, max, step], cls = '') => `
   <label class="field ${cls}"><span>${label}<output>${getPath(p, path)}</output></span>
   <input type="range" data-path="${path}" min="${min}" max="${max}" step="${step}" value="${getPath(p, path)}"></label>`;
 
+/** Slider + number box for one value. Both carry the same data-path and are kept in sync by onParamInput /
+ *  syncCardInputs. The number box has no min / max on purpose: typing past the slider's range is allowed
+ *  (the slider just stops at its end). */
+const sliderRow = (p, path, label, min, max, step) => `
+  <div class="srow"><span class="ax">${label}</span>
+    <input type="range" data-path="${path}" min="${min}" max="${max}" step="${step}" value="${getPath(p, path)}" aria-label="${label}">
+    <input type="number" data-path="${path}" step="${step}" value="${getPath(p, path)}" aria-label="${label}（可直接輸入數字）"></div>`;
+
 function renderSlots() {
   const wrap = $('#slotGroups');
   const groups = state.mode === 'object'
@@ -1067,7 +1075,8 @@ function cardHTML(s) {
   const autoName = (k) => MODES[k].split(' ')[0];
   const modeOpts = Object.entries(MODES).map(([k, v]) => `<option value="${k}" ${p.mode === k ? 'selected' : ''}>${k === 'auto' ? `${v}（無側面：${autoName(s.mode)}／有側面：${autoName(s.sideMode || 'hull')}）` : v}</option>`).join('');
   const roleSel = (vid, name) => `<label class="field" data-role="${vid}"><span>${name}圖用途</span><select data-path="roles.${vid}">${ROLE_OPTS.map(([k, t]) => `<option value="${k}" ${p.roles[vid] === k ? 'selected' : ''}>${t}</option>`).join('')}</select></label>`;
-  const vec = (key, step) => `<div class="vec">${[0, 1, 2].map((i) => `<input type="number" step="${step}" data-path="${key}.${i}" value="${p[key][i]}" aria-label="${key} ${'XYZ'[i]}">`).join('')}</div>`;
+  // placement: one row per value (label · slider · typed number); offset in head units, rotation in degrees
+  const vec = (key, label, min, max, step) => `<div class="field full"><span>${label}</span>${[0, 1, 2].map((i) => sliderRow(p, `${key}.${i}`, 'XYZ'[i], min, max, step)).join('')}</div>`;
   return `
   <section class="card slot ${st.open ? 'open' : ''}" data-slot="${s.id}">
     <div class="card-head slot-head">
@@ -1156,9 +1165,9 @@ function cardHTML(s) {
           <button type="button" data-goedit="rotate" title="在 3D 中拖曳旋轉 (E)">在 3D 中旋轉</button>
         </div>
         <div class="ctrls">
-          ${rangeHTML(p, ['size', '大小', 0.3, 2.5, 0.05], 'full')}
-          <div class="field full"><span>位置偏移 X / Y / Z（頭身單位）</span>${vec('offset', 0.05)}</div>
-          <div class="field full"><span>旋轉 X / Y / Z（度）</span>${vec('rotation', 5)}</div>
+          <div class="field full"><span>大小</span>${sliderRow(p, 'size', '大小', 0.3, 2.5, 0.05)}</div>
+          ${vec('offset', '位置偏移（頭身單位）', -1.5, 1.5, 0.01)}
+          ${vec('rotation', '旋轉（度）', -180, 180, 1)}
           ${s.id === 'legs' ? `<label class="field check full"><input type="checkbox" data-path="splitLegs" ${p.splitLegs ? 'checked' : ''}><span>左右腿分開（走路動畫各自擺動）</span></label>` : ''}
           <div class="full btn-row"><button type="button" class="btn small" data-act="reset-place">重設大小、位置與旋轉</button></div>
         </div>
@@ -1180,6 +1189,8 @@ function onParamInput(id, path, el, final) {
   else v = el.value;
   setPath(p, path, v);
   const o = el.parentElement.querySelector('output'); if (o) o.textContent = el.value;
+  // slider and number box of the same value mirror each other (an out-of-range number just pins the slider)
+  for (const twin of el.closest('.card').querySelectorAll(`[data-path="${path}"]`)) if (twin !== el) twin.value = el.value;
   const key = path.split('.')[0];
   if (CONVERT_KEYS.includes(key)) {
     if (final || el.type !== 'range') scheduleConvert(id, key === 'tolerance' ? 250 : 120);
@@ -1772,7 +1783,7 @@ updateUndoButtons();
 assemble({ keepCamera: false });
 window.__c3d = {
   state, scene, tc, SC, get camera() { return cam; }, get current() { return current; }, get latticeUI() { return latticeUI; }, get sc() { return sc; },
-  convertSlot, loadProject, doExport, resolveMode, setEdit, setPreset, selectSlot, undo, redo, commit, applyDeform, assemble, flushSculpt, slotMeshes, totalTris,
+  history, convertSlot, loadProject, doExport, resolveMode, setEdit, setPreset, selectSlot, undo, redo, commit, applyDeform, assemble, flushSculpt, slotMeshes, totalTris,
 };
 (async () => {
   try {
