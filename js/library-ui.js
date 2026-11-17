@@ -252,8 +252,8 @@ export function initLibraryUI(o) {
         const same = lastJson !== null && snap().json === lastJson;
         if (same) return true;
         const r = await ask({
-          title: '資料夾目前沒有連接', body: `<p>所以沒辦法確認這個角色最新的樣子是否已經存好。要先重新連接資料夾嗎？</p>`,
-          buttons: [{ value: 'cancel', label: '先不要離開' }, { value: 'leave', label: '直接離開', danger: true }, { value: 'reconnect', label: '重新連接資料夾', primary: true }],
+          title: '資料夾目前沒有連接', body: `<p>資料夾斷線之後所做的修改<b>沒有存進去</b>，現在直接離開，這些修改就會<b>遺失</b>。要先重新連接資料夾嗎？</p>`,
+          buttons: [{ value: 'cancel', label: '先不要離開' }, { value: 'leave', label: '直接離開（遺失這些修改）', danger: true }, { value: 'reconnect', label: '重新連接資料夾', primary: true }],
         });
         if (r === 'reconnect') { await reconnect(); return library.status().ready ? guard() : false; }
         return r === 'leave';
@@ -317,7 +317,8 @@ export function initLibraryUI(o) {
     if (st.ready) {
       try { baseline = (await library.get(id)).project; } catch (_) { return false; } // entry is gone → plain unlinked draft
       if (o.generation() !== gen || link) return false;
-    } else if (st.backend !== 'folder') return false;
+    } else if (st.state === 'unconfigured') return 'noplace'; // no storage was ever chosen here: nothing to reconnect, so the draft stays unlinked
+    else if (st.backend !== 'folder') return false;
     link = { id, name: name || o.getName(), gen };
     if (!st.ready) { lastJson = null; setStatus('offline'); o.writeDraft(); return true; } // cannot compare until the folder is reconnected
     // the draft can be newer than the entry: only treat them as equal when the content really is
@@ -354,6 +355,11 @@ export function initLibraryUI(o) {
   async function reconnect() {
     try { await library.reconnectFolder(); } catch (e) { o.toast('無法連接資料夾：' + (e.message || e), 5000); }
     await locationChanged();
+    const st = library.status();
+    if (!st.ready) {
+      if (st.state === 'folder-missing') await ensureReady(); // the existing "folder not found → pick again" question
+      else o.toast('資料夾還是沒有連接，所以沒有儲存。請再按一次「重新連接資料夾」，並在瀏覽器的詢問中選擇允許。', 6000);
+    }
     return library.status().ready;
   }
   async function switchToBrowser() { if (link) await flush({ silent: true }); await library.useBrowser(); await locationChanged(); }
@@ -545,7 +551,7 @@ export function initLibraryUI(o) {
   $('#btnLibrary').addEventListener('click', openPanel);
   $('#btnSave').addEventListener('click', guardBusy(saveNow));
   $('#btnNew').addEventListener('click', guardBusy(newCharacter));
-  chip.addEventListener('click', () => (link ? openPanel() : saveNow()));
+  chip.addEventListener('click', () => { if (o.isRestoring()) return; /* same lock as the buttons */ return link ? openPanel() : saveNow(); });
   addEventListener('keydown', (e) => {
     if ((e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() === 's') {
       e.preventDefault(); // never let the browser's "save page" dialog open

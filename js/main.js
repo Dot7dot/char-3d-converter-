@@ -1828,7 +1828,8 @@ window.__c3d = {
       const p = loadProject(saved); const gen = projectGen;
       await p;
       const linked = await lib.restoreLink({ id: saved.libraryId, name: saved.libraryName, gen });
-      toast(linked ? `已還原上次的編輯：「${lib.linked.name}」` : '已還原上次的編輯（按「新角色」可重新開始）', 3600);
+      toast(linked === 'noplace' ? '已還原上次的編輯。它原本存在儲存庫，但這裡還沒選儲存位置，所以目前是還沒儲存的狀態，按「儲存」就能放回去。'
+        : linked ? `已還原上次的編輯：「${lib.linked.name}」` : '已還原上次的編輯（按「新角色」可重新開始）', linked === 'noplace' ? 7000 : 3600);
     }
   } catch (e) { console.warn('autosave restore failed', e); }
   autosaveOn = true;

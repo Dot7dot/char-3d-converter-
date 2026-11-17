@@ -18,6 +18,8 @@ page errors count as failures.
 | `library-browser.js` | Browser backend: save, auto-save, reload continues the same entry, new / open, rename, duplicate, delete, single export, backup ZIP, import (ZIP, plain project, junk, same id), no-picker desktop note |
 | `library-folder.js` | Folder backend (picker stubbed with an OPFS directory): files + index, auto-save, rename = file rename, rebuild of a deleted index, hand-copied files, reload, permission re-grant, disk-full write, deleted folder, copy from browser storage |
 | `library-folder-ascii.js` | Folder backend on a file system that rejects non-ASCII names (ASCII fallback) |
+| `library-folder-dup.js` | Hand-placed files sharing a library id are never deleted or overwritten (both listing orders) |
+| `library-minor.js` | Chip locked during restore, offline leave guard wording, refused / missing folder feedback, no reconnect state when no folder was chosen |
 | `library-race.js` | Start-up restore race (新角色 / 範例 / open during restore, buttons locked and forced on), draft keeps the library link, 範例 guard, size clamp, object default name, switching storage |
 | `library-upgrade.js` | Live version (`origin/main`) and this version on one origin: `char3d` stays v1, old and new tabs both keep saving the draft, rollback works |
 | `library-quota.js` | 82 % warning (banner, panel, backup), 96 % blocking dialog, simulated `QuotaExceededError` (rollback, nothing half-written), no-`estimate()` fallback |
