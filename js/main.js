@@ -5,7 +5,8 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { TransformControls } from 'three/addons/controls/TransformControls.js';
 import { SLOTS, SLOT_BY_ID, VIEWS, defaultParams, mergeParams, CONVERT_KEYS, icon } from './slots.js';
-import { processView, fileToDataURL, alignView, isIdentityAlign, makeCanvas, mirrorCanvas } from './imageproc.js';
+import { processView, fileToDataURL, isIdentityAlign, makeCanvas, mirrorCanvas } from './imageproc.js';
+import { editView, hasEdits } from './imgedit.js';
 import { convertPart, MODES, QUALITY, BUDGETS, simplifyGeometry, simplifierReady, resolveMode } from './converter.js';
 import { buildCharacter, makeMaterial, applyParamsToMesh, paramsFromMesh, releaseLegCache } from './character.js';
 import { hasDeform, latticeActive, deformPart, latticeOffsets, latticePoint, latticeIndex, LATTICE_N } from './deform.js';
@@ -116,8 +117,43 @@ renderer.setAnimationLoop(() => {
   if (mixer && state.edit === 'view') mixer.update(dt);
   if (view.spin && current && state.edit === 'view' && cam === camera) current.root.rotation.y += dt * 0.6;
   activeControls().update();
-  if (!exporting) renderer.render(scene, cam); // keep the GPU free while encoding files
+  if (exporting) return; // keep the GPU free while encoding files
+  if (partPreview && ++partPreview.tick % 5 === 0) renderPartPreview();
+  renderer.render(scene, cam);
 });
+
+// ---------------------------------------------------------- small live preview (view workbench)
+// Renders only the part being edited, turning slowly, and copies it into a 2D canvas.
+let partPreview = null; // { slot, canvas, getAngle, tick }
+const previewCam = new THREE.PerspectiveCamera(30, 1, 0.01, 200);
+function renderPartPreview() {
+  const { slot, canvas, getAngle } = partPreview;
+  const meshes = slotMeshes(slot);
+  if (!meshes.length) return;
+  const box = new THREE.Box3();
+  current.root.updateMatrixWorld(true);
+  for (const m of meshes) box.expandByObject(m);
+  if (box.isEmpty()) return;
+  // hide everything else for one render
+  const hidden = [];
+  const hide = (o) => { if (o && o.visible) { o.visible = false; hidden.push(o); } };
+  current.root.traverse((o) => { if (o.isMesh && !meshes.includes(o)) hide(o); });
+  [tc.getHelper(), grid, brushCursor, ground].forEach(hide);
+  const c = box.getCenter(new THREE.Vector3()), r = box.getSize(new THREE.Vector3()).length() / 2;
+  const a = getAngle() ?? (performance.now() * 0.0006);
+  const dist = r / Math.sin((previewCam.fov * Math.PI / 180) / 2) * 1.05;
+  previewCam.position.set(c.x + Math.sin(a) * dist, c.y + dist * 0.18, c.z + Math.cos(a) * dist);
+  previewCam.lookAt(c);
+  const pr = renderer.getPixelRatio();
+  const side = Math.min(vp.clientWidth, vp.clientHeight);
+  renderer.setViewport(0, 0, side, side);
+  renderer.render(scene, previewCam);
+  const ctx = canvas.getContext('2d');
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  ctx.drawImage(dom, 0, dom.height - side * pr, side * pr, side * pr, 0, 0, canvas.width, canvas.height);
+  renderer.setViewport(0, 0, vp.clientWidth, vp.clientHeight);
+  hidden.forEach((o) => { o.visible = true; });
+}
 let exporting = false;
 
 function modelBox(onlySlot) {
@@ -295,8 +331,8 @@ async function ensureProcessed(st) {
   for (const [id, r] of Object.entries(raw)) {
     const view = st.views[id];
     const a = id === 'front' ? null : st.params.align[id];
-    const key = view.rawKey + '|' + JSON.stringify(a);
-    if (!view.processed || view.key !== key) { view.processed = alignView(r, a); view.key = key; }
+    const key = view.rawKey + '|' + JSON.stringify(a) + '|' + JSON.stringify(st.params.edits[id]);
+    if (!view.processed || view.key !== key) { view.processed = editView(r, st.params.edits[id], a, id); view.key = key; }
     out[id] = view.processed;
   }
   return out;
@@ -500,6 +536,22 @@ function toggleBtn(id, key, after) {
     after && after();
   });
 }
+// phones / narrow windows: the pinned 3D view can be small, medium or large
+const STAGE_SIZES = ['', 'stage-l', 'stage-s'];
+function setStageSize(cls) {
+  document.body.classList.remove('stage-s', 'stage-l');
+  if (cls) document.body.classList.add(cls);
+  try { localStorage.setItem('c3d-stage', cls); } catch (_) { /* private mode */ }
+}
+$('#tStageSize').addEventListener('click', () => {
+  const now = STAGE_SIZES.findIndex((c) => c && document.body.classList.contains(c));
+  setStageSize(STAGE_SIZES[(Math.max(0, now) + 1) % STAGE_SIZES.length]);
+});
+$('#tMore').addEventListener('click', () => {
+  const on = document.body.classList.toggle('tools-open');
+  $('#tMore').setAttribute('aria-pressed', on);
+});
+try { const saved = localStorage.getItem('c3d-stage'); if (STAGE_SIZES.includes(saved)) setStageSize(saved); } catch (_) { /* ignore */ }
 toggleBtn('#tWire', 'wire', applyWire);
 toggleBtn('#tSolo', 'solo', applySolo);
 toggleBtn('#tSockets', 'sockets', () => current && current.root.traverse((o) => { if (o.userData.helper && o.name === 'helper') o.visible = view.sockets; }));
@@ -1043,7 +1095,7 @@ function cardHTML(s) {
             </label>`).join('')}
         </div>
         <div class="view-tools">
-          <button type="button" class="btn" data-act="align">對齊三視圖…<span class="dot-mark" hidden></span></button>
+          <button type="button" class="btn" data-act="align">對齊與修圖（移動、變形點、橡皮擦）…<span class="dot-mark" hidden></span></button>
           <div class="match" hidden></div>
           ${roleSel('side', '側面')}
           ${roleSel('top', '頂部')}
@@ -1281,10 +1333,10 @@ function updateCard(id) {
   }
   // view tools: alignment + roles only make sense with extra views
   const extra = ['back', 'side', 'top'].filter((v) => st.views[v]);
-  $('.view-tools', card).hidden = !(st.views.front && extra.length);
+  $('.view-tools', card).hidden = !st.views.front;
   $('[data-role="side"]', card).hidden = !st.views.side;
   $('[data-role="top"]', card).hidden = !st.views.top;
-  $('[data-act="align"] .dot-mark', card).hidden = !extra.some((v) => !isIdentityAlign(p.align[v]));
+  $('[data-act="align"] .dot-mark', card).hidden = !(extra.some((v) => !isIdentityAlign(p.align[v])) || ['front', ...extra].some((v) => hasEdits(p.edits[v])));
   const match = $('.match', card);
   match.hidden = !(st.views.back && st.match != null);
   if (!match.hidden) {
@@ -1314,19 +1366,34 @@ async function setView(id, vid, file) {
 async function openAlign(id) {
   const st = state.slots[id];
   if (!st.views.front) { toast('請先上傳正面圖'); return; }
-  setBusy(+1, '準備對齊工具…');
+  setBusy(+1, '準備修圖工具…');
   let raw;
   try { raw = await ensureRaw(st); } finally { setBusy(-1); }
+  const before = JSON.stringify({ align: st.params.align, edits: st.params.edits });
+  const put = (d) => {
+    const p = state.slots[id].params;
+    p.align = { ...p.align, ...d.align };
+    p.edits = { ...p.edits, ...d.edits };
+  };
   openAlignEditor({
-    name: SLOT_BY_ID[id].name, front: raw.front,
-    views: { back: raw.back, side: raw.side, top: raw.top },
-    align: st.params.align,
-    onApply: (al) => {
-      const p = state.slots[id].params;
-      p.align = { ...p.align, ...al };
+    name: SLOT_BY_ID[id].name,
+    views: { front: raw.front, back: raw.back, side: raw.side, top: raw.top },
+    align: st.params.align, edits: st.params.edits,
+    // live: re-convert while the dialog is open so the 3D preview follows every change
+    onLive: (d) => { put(d); scheduleConvert(id, 0); },
+    onApply: (d) => {
+      put(d);
       commit(id); updateCard(id); scheduleConvert(id, 0);
-      toast('已套用對齊，重新轉換中');
+      toast('已套用，重新轉換中');
     },
+    onCancel: () => {
+      const p = state.slots[id].params;
+      if (JSON.stringify({ align: p.align, edits: p.edits }) === before) return;
+      const old = JSON.parse(before);
+      p.align = old.align; p.edits = old.edits;
+      scheduleConvert(id, 0);
+    },
+    onPreview: (canvas, getAngle) => { partPreview = canvas ? { slot: id, canvas, getAngle, tick: 0 } : null; },
   });
 }
 

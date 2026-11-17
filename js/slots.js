@@ -62,6 +62,8 @@ export function defaultParams(slot) {
       top: { dx: 0, dy: 0, sx: 1, sy: 1, rot: 0 },
     },
     roles: { side: 'both', top: 'both' }, // 'both' | 'shape' | 'texture'
+    // --- per-view touch-ups (eraser strokes, outline-point warps), see imgedit.js
+    edits: { front: [], back: [], side: [], top: [] },
     // --- manual 3D adjustment
     stretch: [1, 1, 1],
     taper: { w: [1, 1, 1], d: [1, 1, 1], bend: [0, 0], twist: 0 },
@@ -78,13 +80,15 @@ export function mergeParams(slot, saved = {}) {
   out.align = { ...d.align };
   for (const k of Object.keys(d.align)) out.align[k] = { ...d.align[k], ...(saved.align?.[k] || {}) };
   out.roles = { ...d.roles, ...(saved.roles || {}) };
+  out.edits = { front: [], back: [], side: [], top: [] };
+  for (const k of Object.keys(out.edits)) if (Array.isArray(saved.edits?.[k])) out.edits[k] = saved.edits[k];
   out.taper = { ...d.taper, ...(saved.taper || {}) };
   out.sculpt = Array.isArray(saved.sculpt) ? saved.sculpt : [];
   return out;
 }
 
 /** Params that change the conversion itself (others only re-deform / re-place). */
-export const CONVERT_KEYS = ['mode', 'depth', 'roundness', 'smooth', 'backFill', 'removeBg', 'tolerance', 'align', 'roles'];
+export const CONVERT_KEYS = ['mode', 'depth', 'roundness', 'smooth', 'backFill', 'removeBg', 'tolerance', 'align', 'roles', 'edits'];
 
 // simple inline SVG icons (stroke = currentColor)
 export const ICONS = {
