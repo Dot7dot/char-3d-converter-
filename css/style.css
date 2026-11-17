@@ -419,3 +419,5 @@ code { font: 12px ui-monospace, monospace; background: var(--surface-2); border-
   .lib-acts .btn { flex: 1 1 auto; }
   .lib-dlg .dlg-body, .lib-dlg .dlg-head, .lib-dlg .dlg-foot { padding-left: 12px; padding-right: 12px; }
 }
+.lib-chip.offline { border-color: var(--warn); color: var(--text); }
+.lib-chip.offline::before { background: var(--warn); }

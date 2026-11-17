@@ -21,7 +21,9 @@ main('regression', async (base) => {
   const res = await page.evaluate(async (p) => { const f = new File([JSON.stringify(p)], 'x.c3d.json'); return window.__c3d.library.importFiles([f]); }, proj);
   t.eq([res.added.length, res.failed.length], [1, 0], 'that project file imports into the library');
   // object mode
-  await page.click('[data-mode="object"]'); await page.click('#btnSample'); await ready(page);
+  await page.click('[data-mode="object"]'); await page.click('#btnSample');
+  await page.waitForSelector('.ask-dlg[open]'); // 範例 now asks before replacing unsaved work
+  await page.click('.ask-dlg[open] [data-v="discard"]'); await ready(page);
   const [dg] = await Promise.all([page.waitForEvent('download', { timeout: 60000 }), page.evaluate(() => window.__c3d.doExport('glb'))]);
   t.ok(fs.statSync(await dg.path()).size > 5000, 'object sample exports a GLB too');
   t.eq(errors, [], 'no console / page errors');

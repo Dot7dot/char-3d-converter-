@@ -10,10 +10,18 @@ const files = (page) => page.evaluate(async (d) => {
   for await (const h of dir.values()) out.push({ name: h.name, size: h.kind === 'file' ? (await h.getFile()).size : 0 });
   return out.sort((a, b) => (a.name < b.name ? -1 : 1));
 }, DIR);
-const readJson = (page, name) => page.evaluate(async ([d, n]) => {
-  const dir = await (await navigator.storage.getDirectory()).getDirectoryHandle(d);
-  return JSON.parse(await (await (await dir.getFileHandle(n)).getFile()).text());
-}, [DIR, name]);
+const readJson = async (page, name) => { // retried: the app may be replacing the file at that very moment
+  let err;
+  for (let i = 0; i < 8; i++) {
+    try {
+      return await page.evaluate(async ([d, n]) => {
+        const dir = await (await navigator.storage.getDirectory()).getDirectoryHandle(d);
+        return JSON.parse(await (await (await dir.getFileHandle(n)).getFile()).text());
+      }, [DIR, name]);
+    } catch (e) { err = e; await new Promise((r) => setTimeout(r, 300)); }
+  }
+  throw err;
+};
 const projectFiles = async (page) => (await files(page)).filter((f) => f.name.endsWith('.c3d.json'));
 
 main('library-folder', async (base) => {
@@ -37,9 +45,11 @@ main('library-folder', async (base) => {
 
   // ---- auto-save writes into the same file
   await L.editHead(page, 0.4);
-  await L.until(page, async ([d, n]) => {
-    const dir = await (await navigator.storage.getDirectory()).getDirectoryHandle(d);
-    return JSON.parse(await (await (await dir.getFileHandle(n)).getFile()).text()).slots.head.params.offset[1] === 0.4;
+  await L.until(page, async ([d, n]) => { // the app may be mid-write: a missing / half-read file just means "not yet"
+    try {
+      const dir = await (await navigator.storage.getDirectory()).getDirectoryHandle(d);
+      return JSON.parse(await (await (await dir.getFileHandle(n)).getFile()).text()).slots.head.params.offset[1] === 0.4;
+    } catch (_) { return false; }
   }, [DIR, `勇者__${id8}.c3d.json`]);
   t.ok(true, 'auto-save updated the file');
   await L.waitStatus(page, '已儲存');
@@ -100,6 +110,17 @@ main('library-folder', async (base) => {
   await page.waitForFunction(() => window.__c3d && window.__c3d.lib);
   await page.waitForTimeout(800);
   t.eq(await page.evaluate(() => window.__c3d.library.status().state), 'needs-permission', 'permission "prompt" is detected');
+  // F4: nothing is attempted while disconnected — no write, no error toast, a clear chip, a neutral leave dialog
+  await page.waitForTimeout(4500);
+  t.eq(await page.evaluate(() => window.__w.length), 0, 'disconnected: no save is attempted (no file write)');
+  const chipTxt = await page.textContent('#libStatus');
+  t.ok(chipTxt.includes('需要重新連接資料夾') && !chipTxt.includes('儲存失敗'), `disconnected: chip says 需要重新連接資料夾, not 儲存失敗 (${chipTxt})`);
+  t.ok(!(await page.textContent('#toast')).includes('沒有存進去'), 'disconnected: no error toast without user action');
+  await page.click('#btnNew');
+  await page.waitForSelector('.ask-dlg[open]');
+  const gd = await page.textContent('.ask-dlg[open]');
+  t.ok(gd.includes('重新連接資料夾') && gd.includes('直接離開') && !gd.includes('最新的變更沒有存進去'), 'leave guard offers 重新連接資料夾 and does not claim unsaved changes');
+  await L.answer(page, 'cancel');
   await page.click('#btnSave'); // saving while disconnected explains instead of failing silently
   await page.waitForSelector('.ask-dlg[open]');
   t.ok((await page.textContent('.ask-dlg[open]')).includes('重新連接資料夾'), 'saving while disconnected asks to reconnect');
@@ -112,6 +133,9 @@ main('library-folder', async (base) => {
   await page.waitForSelector('#libBody .lib-grid');
   t.eq((await L.cards(page)).length, 2, 'after reconnecting the gallery is back');
   await L.closePanel(page);
+  await L.waitStatus(page, '已儲存');
+  await page.waitForTimeout(4000);
+  t.eq(await page.evaluate(() => window.__w.length), 0, 'after reconnecting with nothing changed: chip 已儲存 and still no write (baseline re-compared with the stored entry)');
 
   // ---- write failure (disk full) → blocking dialog, nothing half written
   // the link made while disconnected could not be verified, so it re-saves once after reconnecting: let that finish first
@@ -147,8 +171,8 @@ main('library-folder', async (base) => {
   t.ok((await page.textContent('#libBody')).includes('找不到資料夾'), 'panel says the folder cannot be found');
   await page.click('#libBody [data-do="pick"]');
   await page.waitForFunction(() => window.__c3d.library.status().state === 'ready');
-  await page.waitForSelector('#libBody .lib-empty');
-  t.ok(true, 'picking a folder again works (new empty folder)');
+  await page.waitForSelector('#libBody .lib-empty, #libBody .lib-grid');
+  t.ok(true, 'picking a folder again works (new empty folder; the open character is written into it right away)');
   await L.closePanel(page);
   await L.until(page, async (d) => {
     try {
@@ -183,7 +207,32 @@ main('library-folder', async (base) => {
   t.eq((await projectFiles(b2.page)).length, 1, 'the character was copied into the folder as a file', JSON.stringify(await files(b2.page)));
   await b2.page.waitForFunction(() => window.__c3d.library.status().backend === 'folder' && document.querySelectorAll('#libBody .lib-card').length === 1);
   t.eq((await L.cards(b2.page)).map((c) => [c.name, c.current]), [['舊瀏覽器角色', true]], 'the open character is still the current one after the move');
+  // same flow as the browser test: second character, open it, backup ZIP, import into an EMPTY folder
+  await b2.page.click('#libDone');
+  await b2.page.click('#btnNew'); await b2.page.waitForFunction(() => !window.__c3d.lib.linked);
+  await b2.page.click('#btnSample'); await ready(b2.page);
+  await L.saveAs(b2.page, '第二個');
+  await L.openPanel(b2.page);
+  await b2.page.waitForFunction(() => document.querySelectorAll('#libBody .lib-card').length === 2, null, { timeout: 15000 });
+  t.eq((await L.cards(b2.page)).map((c) => c.name).sort(), ['舊瀏覽器角色', '第二個'].sort(), 'folder: two characters in the gallery');
+  await L.cardAct(b2.page, '舊瀏覽器角色', 'open'); await L.waitLinked(b2.page, '舊瀏覽器角色');
+  t.eq((await projectFiles(b2.page)).length, 2, 'folder: two files');
+  await L.openPanel(b2.page);
+  const [dlz] = await Promise.all([b2.page.waitForEvent('download'), b2.page.click('#libBackup')]);
+  const zp = require('path').join(require('os').tmpdir(), 'c3d-folder-backup.zip'); await dlz.saveAs(zp);
+  t.eq((await L.unzipNames(b2.page, zp)).map((n) => n.lib.name).sort(), ['舊瀏覽器角色', '第二個'].sort(), 'folder: backup ZIP holds both characters');
   t.eq(b2.errors, [], 'no console / page errors (migration session)');
   await b2.browser.close();
+  const b3 = await open(base, { library: true, init: INIT });
+  await b3.page.evaluate(() => window.__c3d.library.status());
+  await b3.page.click('#btnLibrary'); await b3.page.waitForSelector('#libraryDlg[open] [data-do="pick"]');
+  await b3.page.click('#libBody [data-do="pick"]');
+  await b3.page.waitForSelector('#libBody .lib-empty');
+  await b3.page.setInputFiles('#libFile', [zp]);
+  await b3.page.waitForFunction(() => document.querySelectorAll('#libBody .lib-card').length === 2, null, { timeout: 30000 });
+  await L.until(b3.page, async () => { const d = await (await navigator.storage.getDirectory()).getDirectoryHandle('char3d-test-lib'); let n = 0; for await (const h of d.values()) { if (h.name.endsWith('.crswap')) return false; if (h.name.endsWith('.c3d.json') && (await h.getFile()).size > 1000) n++; } return n === 2; }, null, 15000);
+  t.eq((await L.cards(b3.page)).map((c) => c.name).sort(), ['舊瀏覽器角色', '第二個'].sort(), 'folder: backup ZIP imported into an empty folder (2 files written)');
+  t.eq(b3.errors, [], 'no console / page errors (import session)');
+  await b3.browser.close();
   return t.done();
 });

@@ -21,8 +21,10 @@ export const FALLBACK_QUOTA_BYTES = 200 * 1024 * 1024;
 
 export const INDEX_FILE = 'char3d-library.json';
 export const FILE_SUFFIX = '.c3d.json';
-export const DB_NAME = 'char3d';
-export const DB_VERSION = 2; // v1 only had `kv` (draft autosave); v2 adds the library stores
+// The library has its OWN database. `char3d` (v1, store `kv`: the draft autosave) stays exactly as the live site
+// has it, so a tab or a rollback running the old code can never hit a VersionError on it.
+export const DB_NAME = 'char3d-library';
+export const DB_VERSION = 1;
 const KV = 'kv', META = 'lib-meta', DATA = 'lib-data';
 
 // ============================================================== errors
@@ -90,7 +92,7 @@ export function detectEnv(g = globalThis) {
 }
 
 // ============================================================== IndexedDB
-/** Opens the shared `char3d` database (draft autosave + library). Also used by main.js for the draft. */
+/** Opens the library database (config + folder handle in `kv`, characters in `lib-meta` / `lib-data`). */
 export function openDB(g = globalThis) {
   return new Promise((res, rej) => {
     const rq = g.indexedDB.open(DB_NAME, DB_VERSION);
@@ -102,6 +104,7 @@ export function openDB(g = globalThis) {
     };
     rq.onsuccess = () => { const db = rq.result; db.onversionchange = () => db.close(); res(db); };
     rq.onerror = () => rej(rq.error);
+    rq.onblocked = () => console.warn('char3d-library upgrade is waiting for another tab to close its connection');
   });
 }
 /**
@@ -190,7 +193,7 @@ class FolderBackend {
     };
   }
   /** Gallery metadata: trust the index entry when file size and time still match, otherwise re-read that file. */
-  async scan() {
+  async scan(retried = false) {
     const known = new Map((await this.readIndexFile()).map((e) => [e.file, e]));
     const out = [], ids = new Set();
     for await (const h of this.dir.values()) {
@@ -198,7 +201,11 @@ class FolderBackend {
       const f = await h.getFile();
       let m = known.get(h.name);
       if (!(m && m.size === f.size && m.mtime === f.lastModified)) { m = await this.metaFromFile(h.name, f); if (!m) continue; }
-      if (ids.has(m.id)) m = { ...m, id: hashId(m.id + h.name) }; // a hand-copied duplicate of an existing character
+      if (ids.has(m.id)) {
+        // either a hand-copied duplicate, or another tab is in the middle of a rename (old + new file both there)
+        if (!retried) { await new Promise((r) => setTimeout(r, 300)); return this.scan(true); }
+        m = { ...m, id: hashId(m.id + h.name) };
+      }
       ids.add(m.id); out.push(m);
     }
     const before = JSON.stringify([...known.values()].sort((a, b) => (a.file < b.file ? -1 : 1)));
@@ -208,11 +215,18 @@ class FolderBackend {
   }
   async list(fresh = true) { return fresh || !this.metas ? this.scan() : this.metas; }
   async getMeta(id) { return (await this.list(false)).find((m) => m.id === id) || null; }
+  /** Another tab may be renaming / rewriting the file right now: on a miss look at the folder again once. */
   async read(id) {
-    const meta = await this.getMeta(id);
-    if (!meta) throw new NotFoundError('character missing', 'entry');
-    try { return JSON.parse(await (await (await this.dir.getFileHandle(meta.file)).getFile()).text()); } catch (e) {
-      const m = mapError(e); if (m instanceof NotFoundError) { await this.scan(); throw m; } throw m;
+    for (let attempt = 0; ; attempt++) {
+      const meta = attempt ? (await this.scan()).find((m) => m.id === id) : await this.getMeta(id);
+      try {
+        if (!meta) throw new NotFoundError('character missing', 'entry');
+        return JSON.parse(await (await (await this.dir.getFileHandle(meta.file)).getFile()).text());
+      } catch (e) {
+        const m = mapError(e);
+        if (m instanceof NotFoundError && attempt === 0) { await new Promise((r) => setTimeout(r, 200)); continue; }
+        throw m;
+      }
     }
   }
   async put(meta, project) {

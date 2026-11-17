@@ -10,6 +10,8 @@ const $ = (s, el = document) => el.querySelector(s);
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 /** Quiet time after the last change before a linked character is saved. */
 export const AUTOSAVE_MS = 2500;
+/** (tests can set window.__c3dAutosaveMs to make the debounce very long and prove the other save paths on their own) */
+const autosaveMs = () => (typeof window !== 'undefined' && window.__c3dAutosaveMs) || AUTOSAVE_MS;
 
 const fmtBytes = (n) => (n >= 1073741824 ? (n / 1073741824).toFixed(1) + ' GB' : n >= 1048576 ? (n / 1048576).toFixed(1) + ' MB' : Math.max(1, Math.round(n / 1024)) + ' KB');
 const fmtDate = (iso) => { const d = new Date(iso); return Number.isNaN(+d) ? '' : d.toLocaleString('zh-TW', { dateStyle: 'medium', timeStyle: 'short' }); };
@@ -51,11 +53,11 @@ function ask({ title, body = '', input = null, buttons }) {
  */
 export function initLibraryUI(o) {
   const { library } = o;
-  let link = null;            // { id, name } of the library entry being edited, or null
+  let link = null;            // { id, name, gen } of the library entry being edited, or null. gen = project generation it belongs to
   let lastJson = null;        // serialized project at the last successful save / open (change detection)
   let saveTimer = 0, peekTimer = 0;
   let inflight = null;
-  let status = 'idle';        // idle | saved | saving | failed
+  let status = 'idle';        // idle | saved | saving | failed | offline (folder must be reconnected)
   let quotaShown = false, connShown = false, warned = false;
   let view = { st: library.status(), metas: [], usage: null, err: null, msg: '' };
   let busy = false;
@@ -75,10 +77,10 @@ export function initLibraryUI(o) {
       return;
     }
     chip.hidden = false;
-    const t = { saved: '已儲存', saving: '儲存中…', failed: '儲存失敗', idle: '已儲存' }[status];
+    const t = { saved: '已儲存', saving: '儲存中…', failed: '儲存失敗', idle: '已儲存', offline: '需要重新連接資料夾' }[status];
     chip.className = 'lib-chip ' + (status === 'idle' ? 'saved' : status);
     chip.innerHTML = `<b>${esc(link.name)}</b> · ${t}`;
-    chip.title = status === 'failed' ? '沒有存進去，按這裡開啟儲存庫查看原因' : '已連到儲存庫的角色，變更會自動儲存';
+    chip.title = status === 'failed' ? '沒有存進去，按這裡開啟儲存庫查看原因' : status === 'offline' ? '按這裡開啟儲存庫，重新連接資料夾後才會繼續儲存' : '已連到儲存庫的角色，變更會自動儲存';
   }
 
   // ------------------------------------------------------------ errors → messages
@@ -131,13 +133,21 @@ export function initLibraryUI(o) {
     } catch (_) { return undefined; } // keep the previous thumbnail
   }
 
-  /** Save the linked character now (no-op when nothing changed). Resolves true when the entry is up to date. */
-  async function flush({ fast = false, force = false, silent = false } = {}) {
+  /** The folder is not usable (permission must be given again, or it is gone): we do not even try to save. */
+  const offline = () => !library.status().ready;
+  /**
+   * Save the linked character now (no-op when nothing changed). Resolves true when the entry is up to date.
+   * `expectId`: a debounced save only ever writes into the entry it was scheduled for.
+   */
+  async function flush({ fast = false, force = false, silent = false, expectId = null } = {}) {
     clearTimeout(saveTimer); clearTimeout(peekTimer);
     if (!link) return true;
+    if (expectId && link.id !== expectId) return true; // the page moved to another character since this was scheduled
     while (inflight) await inflight; // let a running save finish, then look again
     const cur = link;
-    if (!cur) return true;
+    if (!cur || (expectId && cur.id !== expectId)) return true;
+    if (o.generation() !== cur.gen) { link = null; lastJson = null; setStatus('idle'); return true; } // project was replaced under the link: never write it
+    if (offline()) { setStatus('offline'); return false; }
     const { project, json } = snap();
     if (json === lastJson) { if (status !== 'idle') setStatus('saved'); return true; }
     setStatus('saving');
@@ -154,10 +164,22 @@ export function initLibraryUI(o) {
   /** Called by main.js after every change (its touch()). Cheap: only timers. */
   function markDirty() {
     if (!link) { paintChip(); return; }
-    clearTimeout(peekTimer);
-    peekTimer = setTimeout(() => { if (link && snap().json !== lastJson) setStatus('saving'); }, 400); // honest status while waiting
-    clearTimeout(saveTimer);
-    saveTimer = setTimeout(() => flush(), AUTOSAVE_MS);
+    clearTimeout(peekTimer); clearTimeout(saveTimer);
+    if (offline()) { setStatus('offline'); return; } // no save attempts, no error toasts, until the folder is reconnected
+    const id = link.id;
+    peekTimer = setTimeout(() => { if (link && link.id === id && snap().json !== lastJson) setStatus('saving'); }, 400); // honest status while waiting
+    saveTimer = setTimeout(() => flush({ expectId: id }), autosaveMs());
+  }
+  /** After the storage became usable again / changed: compare the screen with the stored copy and save only if it differs. */
+  async function rebaseline() {
+    if (!link) return;
+    const cur = link, gen = o.generation();
+    if (offline()) { setStatus('offline'); return; }
+    let base = null;
+    try { base = JSON.stringify({ ...(await library.get(cur.id)).project, library: undefined, savedAt: 0 }); } catch (_) { /* not stored there (yet) */ }
+    if (link !== cur || o.generation() !== gen) return;
+    lastJson = base;
+    if (base !== null && snap().json === base) setStatus('saved'); else { setStatus('saving'); flush({ expectId: cur.id }); }
   }
 
   /** Make sure there is somewhere to save to. May ask the user (and run the folder picker straight from a click). */
@@ -202,10 +224,13 @@ export function initLibraryUI(o) {
     if (name === null) return false;
     if (name !== o.getName()) o.setName(name); // the project name and the library name start out the same (before the snapshot below)
     const { project, json } = snap();
+    const gen = o.generation();
     setStatus('saving');
     try {
       const meta = await library.save({ name, project, thumb: makeThumb() });
-      link = { id: meta.id, name: meta.name }; lastJson = json;
+      if (o.generation() !== gen || link) { setStatus('idle'); paintChip(); o.toast(`已儲存「${meta.name}」到儲存庫（畫面上的角色在這段時間換了，沒有連到它）`); afterSave(); return true; }
+      link = { id: meta.id, name: meta.name, gen }; lastJson = json;
+      o.writeDraft(); // the draft must know the link right now (not only after the next edit)
       setStatus('saved');
       o.toast(`已儲存「${meta.name}」到儲存庫`);
       afterSave();
@@ -222,6 +247,17 @@ export function initLibraryUI(o) {
   /** Is it fine to replace the current character? Saves a linked one first, asks about an unlinked one. */
   async function guard() {
     if (link) {
+      if (offline()) {
+        // nothing was attempted: do not claim there are unsaved changes unless we know there are
+        const same = lastJson !== null && snap().json === lastJson;
+        if (same) return true;
+        const r = await ask({
+          title: '資料夾目前沒有連接', body: `<p>所以沒辦法確認這個角色最新的樣子是否已經存好。要先重新連接資料夾嗎？</p>`,
+          buttons: [{ value: 'cancel', label: '先不要離開' }, { value: 'leave', label: '直接離開', danger: true }, { value: 'reconnect', label: '重新連接資料夾', primary: true }],
+        });
+        if (r === 'reconnect') { await reconnect(); return library.status().ready ? guard() : false; }
+        return r === 'leave';
+      }
       if (await flush({ silent: true })) return true;
       const r = await ask({
         title: '最新的變更沒有存進去', body: '<p>可能是儲存空間已滿或資料夾無法使用（可以按上方的儲存狀態查看）。現在離開的話，最後這些變更會遺失。</p>',
@@ -237,7 +273,7 @@ export function initLibraryUI(o) {
     if (r === 'save') return saveNow();
     return r === 'discard';
   }
-  const unlink = () => { link = null; lastJson = null; clearTimeout(saveTimer); clearTimeout(peekTimer); setStatus('idle'); };
+  const unlink = () => { o.invalidate(); /* a slow step started earlier can no longer claim this project */ link = null; lastJson = null; clearTimeout(saveTimer); clearTimeout(peekTimer); setStatus('idle'); };
 
   async function newCharacter() {
     if (!(await guard())) return;
@@ -245,53 +281,61 @@ export function initLibraryUI(o) {
     o.newProject();
     paintChip();
   }
-  /** Used before something replaces the current content (the sample): a linked entry is saved, then left alone. */
+  /** Before something replaces the current content (the sample): the same questions as 新角色, then the link is dropped. */
   async function leaveLinked() {
-    if (!link) return true;
-    if (!(await flush({ silent: true }))) {
-      const r = await ask({ title: '最新的變更沒有存進去', body: '<p>繼續的話，最後這些變更會遺失。</p>', buttons: [{ value: 'cancel', label: '取消', primary: true }, { value: 'leave', label: '繼續', danger: true }] });
-      if (r !== 'leave') return false;
-    }
+    if (!(await guard())) return false;
     unlink();
     return true;
   }
 
   async function openEntry(id) {
+    if (o.isRestoring()) return;
     if (link && link.id === id) { dlg.close(); o.toast('這個角色已經在編輯中'); return; }
     if (!(await guard())) return;
     let got;
-    try { got = await library.get(id); } catch (e) { o.toast(e instanceof NotFoundError ? '找不到這個角色，可能已被刪除' : '無法開啟：' + (e.message || e)); refresh(); return; }
+    try { got = await library.get(id); } catch (e) { o.toast(e instanceof NotFoundError ? '找不到這個角色，可能已被刪除' : '無法開啟：' + (e.message || e), 4000); refresh(); return; }
     unlink(); // while loading, edits must not be saved into the previous entry
     o.toast('開啟中…', 8000);
+    let gen;
     try {
-      await o.openProject(got.project);
+      gen = await o.openProject(got.project); // the generation this load created
     } catch (e) { o.toast('無法開啟這個角色：' + (e.message || e), 5000); paintChip(); return; }
-    link = { id: got.meta.id, name: got.meta.name };
+    if (o.generation() !== gen || link) return; // something else replaced the project meanwhile: do not link it to this entry
+    link = { id: got.meta.id, name: got.meta.name, gen };
     lastJson = snap().json; // baseline = what we just loaded, so merely opening never rewrites the entry
+    o.writeDraft();
     setStatus('saved');
     if (dlg.open) dlg.close();
     o.toast(`已開啟「${link.name}」`);
   }
 
-  /** After a reload: continue the library entry the draft belonged to. */
-  async function restoreLink({ id, name } = {}) {
+  /** After a reload: continue the library entry the draft belonged to. `gen` = the generation the restore created. */
+  async function restoreLink({ id, name, gen } = {}) {
     if (!id) return false;
     let baseline = null;
-    if (library.status().ready) {
+    const st = library.status();
+    if (st.ready) {
       try { baseline = (await library.get(id)).project; } catch (_) { return false; } // entry is gone → plain unlinked draft
-    }
-    link = { id, name: name || o.getName() };
+      if (o.generation() !== gen || link) return false;
+    } else if (st.backend !== 'folder') return false;
+    link = { id, name: name || o.getName(), gen };
+    if (!st.ready) { lastJson = null; setStatus('offline'); o.writeDraft(); return true; } // cannot compare until the folder is reconnected
     // the draft can be newer than the entry: only treat them as equal when the content really is
-    lastJson = baseline ? JSON.stringify({ ...baseline, library: undefined, savedAt: 0 }) : null;
-    setStatus(snap().json === lastJson ? 'saved' : 'saving');
-    markDirty();
+    lastJson = JSON.stringify({ ...baseline, library: undefined, savedAt: 0 });
+    o.writeDraft();
+    if (snap().json === lastJson) setStatus('saved'); else { setStatus('saving'); markDirty(); }
     return true;
   }
+  /** Main calls this when the start-up restore is over (buttons are enabled again). */
+  function afterRestore() { paintChip(); }
 
   // ------------------------------------------------------------ location (folder / browser)
   async function pickFolder() {
     let r;
-    try { r = await library.connectFolder(); } catch (e) { o.toast('無法選擇資料夾：' + (e.message || e), 5000); return false; }
+    // pending changes go to the OLD location: the save is queued before the picker even opens (the picker needs the click's gesture, so it is not awaited first)
+    const pending = link ? flush({ silent: true }) : null;
+    try { r = await library.connectFolder(); } catch (e) { await pending; o.toast('無法選擇資料夾：' + (e.message || e), 5000); return false; }
+    await pending;
     if (!r) return false; // cancelled
     if (r.status.ready && r.firstTime) {
       let n = 0;
@@ -312,16 +356,14 @@ export function initLibraryUI(o) {
     await locationChanged();
     return library.status().ready;
   }
-  async function switchToBrowser() { await library.useBrowser(); await locationChanged(); }
+  async function switchToBrowser() { if (link) await flush({ silent: true }); await library.useBrowser(); await locationChanged(); }
   async function switchToFolder() {
-    if (library.status().hasSavedFolder) { await library.useFolder(); await locationChanged(); } else await pickFolder();
+    if (library.status().hasSavedFolder) { if (link) await flush({ silent: true }); await library.useFolder(); await locationChanged(); } else await pickFolder();
   }
-  /** The storage moved: if the open character is not in the new place, the next save creates it there. */
+  /** The storage moved or came back: forget the old baseline, compare with the copy in the new place, save only if it differs. */
   async function locationChanged() {
     quotaShown = connShown = false;
-    if (link && library.status().ready) {
-      try { if (!(await library.list()).some((m) => m.id === link.id)) { lastJson = null; markDirty(); } } catch (_) { /* shown in the panel */ }
-    }
+    if (link) { lastJson = null; clearTimeout(saveTimer); await rebaseline(); o.writeDraft(); }
     if (dlg.open) await refresh();
   }
 
@@ -390,7 +432,7 @@ export function initLibraryUI(o) {
     });
     if (r !== 'del') return;
     try {
-      if (isCurrent) unlink();
+      if (isCurrent) { unlink(); o.writeDraft(); }
       await library.remove(id);
       o.toast(`已刪除「${m.name}」`);
     } catch (e) { o.toast('刪除失敗：' + (e.message || e), 5000); }
@@ -507,7 +549,7 @@ export function initLibraryUI(o) {
   addEventListener('keydown', (e) => {
     if ((e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() === 's') {
       e.preventDefault(); // never let the browser's "save page" dialog open
-      if (!document.querySelector('dialog[open]') && !busy) guardBusy(saveNow)();
+      if (!document.querySelector('dialog[open]') && !busy && !o.isRestoring()) guardBusy(saveNow)();
     }
   });
   // a closing tab: save what is pending (fast = no compression, so the write starts immediately)
@@ -517,7 +559,7 @@ export function initLibraryUI(o) {
 
   const ready = library.init().then(() => { view.st = library.status(); paintChip(); }).catch((e) => console.warn('library init failed', e));
   return {
-    ready, markDirty, flush, saveNow, guard, leaveLinked, restoreLink, openPanel, refresh,
-    get linked() { return link ? { ...link } : null; }, get status() { return status; },
+    ready, markDirty, flush, saveNow, guard, leaveLinked, restoreLink, afterRestore, openEntry, openPanel, refresh,
+    get linked() { return link && o.generation() === link.gen ? { ...link } : null; }, get status() { return status; },
   };
 }

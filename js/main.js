@@ -15,7 +15,7 @@ import * as SC from './sculpt.js';
 import { openAlignEditor } from './align.js';
 import * as EX from './exporter.js';
 import { characterSamples, objectSample } from './samples.js';
-import { createLibrary, openDB } from './library.js';
+import { createLibrary } from './library.js';
 import { initLibraryUI } from './library-ui.js';
 
 const $ = (s, el = document) => el.querySelector(s);
@@ -1189,6 +1189,7 @@ function onParamInput(id, path, el, final) {
   if (el.type === 'checkbox') v = el.checked;
   else if (el.type === 'range' || el.type === 'number') { v = parseFloat(el.value); if (!Number.isFinite(v)) return; }
   else v = el.value;
+  if (path === 'size') { v = Math.max(0.05, v); if (final && String(v) !== el.value) el.value = v; } // 0 would collapse the part
   setPath(p, path, v);
   const o = el.parentElement.querySelector('output'); if (o) o.textContent = el.value;
   // slider and number box of the same value mirror each other (an out-of-range number just pins the slider)
@@ -1387,6 +1388,7 @@ const viewTitle = (id, vid) => `${SLOT_BY_ID[id].name} · ${VIEWS.find((v) => v.
 
 /** A new photo / file for a view: crop first, then convert. */
 async function setView(id, vid, file) {
+  if (restoring) { toast('還原上次的編輯中，請稍候'); return; }
   try {
     const photo = fitCanvas(await loadImage(file), 2048); // crop at high resolution, store smaller
     const out = await openCropper({ source: photo, title: viewTitle(id, vid) });
@@ -1516,7 +1518,9 @@ function setMode(mode) {
 // ============================================================== samples / project / autosave
 $('#btnHelp').addEventListener('click', () => $('#helpDlg').showModal());
 $('#btnSample').addEventListener('click', async () => {
-  if (!(await lib.leaveLinked())) return; // a saved character must not be overwritten by the sample
+  if (restoring) return;
+  if (!(await lib.leaveLinked())) return; // same questions as 新角色: a saved / unsaved character is never replaced silently
+  projectGen++;
   flushSculpt();
   const set = state.mode === 'object' ? objectSample() : characterSamples();
   for (const [id, views] of Object.entries(set)) {
@@ -1543,7 +1547,11 @@ function projectData() {
   }
   return { format: 'char3d-project', version: 3, savedAt: new Date().toISOString(), mode: state.mode, settings: state.settings, slots };
 }
+/** Counts how often the current project was replaced (new / sample / open / restore). The library UI uses it so a
+ *  slow async step can never link, or auto-save, a project that is no longer the one it started with. */
+let projectGen = 0;
 async function loadProject(data) {
+  projectGen++;
   if (data.format !== 'char3d-project') throw new Error('不是 Char3D 專案檔');
   dropSculptSession();
   for (const s of SLOTS) { disposePart(state.slots[s.id]); state.slots[s.id] = freshSlot(s); }
@@ -1569,18 +1577,25 @@ async function loadProject(data) {
 }
 /** A blank character (asked-for-confirmation and unlinking are done by the library UI before this runs). */
 function newProject() {
+  projectGen++;
   dropSculptSession();
   for (const s of SLOTS) { disposePart(state.slots[s.id]); state.slots[s.id] = freshSlot(s); }
   state.slots[state.mode === 'object' ? 'object' : 'head'].open = true;
   state.selected = null;
-  state.settings.name = 'MyHero'; $('#setName').value = $('#expName').value = 'MyHero';
+  const dn = state.mode === 'object' ? 'MyProp' : 'MyHero'; // same defaults the export dialog uses
+  state.settings.name = dn; $('#setName').value = $('#expName').value = dn;
   clearHistory();
   renderSlots(); assemble({ keepCamera: false });
   autosaveClear();
 }
 
 // autosave to IndexedDB so a refresh never loses work
-const idb = () => openDB(); // shared with the library (it owns the schema: kv + library stores)
+// the draft database is unchanged from the live site (v1, store `kv`); the library keeps its own database
+const idb = () => new Promise((res, rej) => {
+  const rq = indexedDB.open('char3d', 1);
+  rq.onupgradeneeded = () => rq.result.createObjectStore('kv');
+  rq.onsuccess = () => res(rq.result); rq.onerror = () => rej(rq.error);
+});
 async function idbOp(mode, fn) {
   const db = await idb();
   return new Promise((res, rej) => {
@@ -1778,17 +1793,26 @@ state.slots.head.open = true;
 renderSlots();
 updateUndoButtons();
 assemble({ keepCamera: false });
+// While the last draft is being restored, actions that replace the project wait (see library-ui.js: projectGen)
+let restoring = true;
+const RESTORE_LOCK = ['#btnNew', '#btnSample', '#btnLibrary', '#btnSave'];
+const lockRestore = (on) => { restoring = on; for (const sel of RESTORE_LOCK) $(sel).disabled = on; };
+lockRestore(true);
 const library = createLibrary();
 lib = initLibraryUI({
   library,
   getProject: projectData,
-  openProject: loadProject,
+  openProject: (data) => { const p = loadProject(data); const gen = projectGen; return p.then(() => gen); }, // → generation it created
+  generation: () => projectGen,
+  invalidate: () => { projectGen++; },
+  isRestoring: () => restoring,
   newProject,
   getThumb: previewCanvas,
   hasContent: () => Object.keys(projectData().slots).length > 0,
   getName: () => state.settings.name,
   setName: (n) => { state.settings.name = n; $('#setName').value = n; $('#expName').value = n; touch(); },
   flushDraft: () => { if (autosaveOn) { clearTimeout(saveTimer); writeDraft(); } },
+  writeDraft, // right now, whatever the state: used when the library link changes
   toast,
   download: EX.download,
 });
@@ -1801,10 +1825,13 @@ window.__c3d = {
     await lib.ready;
     const saved = new URLSearchParams(location.search).has('fresh') ? null : await idbOp('readonly', (s) => s.get('autosave'));
     if (saved && Object.values(saved.slots || {}).some((s) => s.views && s.views.front)) {
-      await loadProject(saved);
-      const linked = await lib.restoreLink({ id: saved.libraryId, name: saved.libraryName });
+      const p = loadProject(saved); const gen = projectGen;
+      await p;
+      const linked = await lib.restoreLink({ id: saved.libraryId, name: saved.libraryName, gen });
       toast(linked ? `已還原上次的編輯：「${lib.linked.name}」` : '已還原上次的編輯（按「新角色」可重新開始）', 3600);
     }
   } catch (e) { console.warn('autosave restore failed', e); }
   autosaveOn = true;
+  lockRestore(false);
+  lib.afterRestore();
 })();

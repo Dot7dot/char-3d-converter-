@@ -24,16 +24,16 @@ main('library-browser', async (base) => {
   t.ok(items[0].size > 1000 && items[0].encoding === 'gzip', `payload stored gzip-compressed (${items[0].size} bytes)`);
   t.ok((await page.textContent('#libStatus')).includes('勇者') && (await page.textContent('#libStatus')).includes('已儲存'), 'status chip: name + 已儲存');
   const idb = await page.evaluate(async () => {
-    const db = await new Promise((res, rej) => { const r = indexedDB.open('char3d'); r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error); });
-    const stores = [...db.objectStoreNames], ver = db.version;
+    const open = (n) => new Promise((res, rej) => { const r = indexedDB.open(n); r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error); });
+    const db = await open('char3d-library'), draftDb = await open('char3d');
+    const stores = [...db.objectStoreNames], ver = draftDb.version, draftStores = [...draftDb.objectStoreNames];
     const rec = await new Promise((res) => { const r = db.transaction('lib-data').objectStore('lib-data').getAll(); r.onsuccess = () => res(r.result); });
-    const draft = await new Promise((res) => { const r = db.transaction('kv').objectStore('kv').get('autosave'); r.onsuccess = () => res(r.result); });
-    db.close();
-    return { stores, ver, types: rec.map((x) => [x.blob instanceof Blob, typeof x.blob, x.encoding]), hasDraft: !!draft };
+    db.close(); draftDb.close();
+    return { stores, ver, draftStores, types: rec.map((x) => [x.blob instanceof Blob, typeof x.blob, x.encoding]) };
   });
-  t.eq(idb.stores.sort(), ['kv', 'lib-data', 'lib-meta'], 'db has kv + two library stores');
+  t.eq(idb.stores.sort(), ['kv', 'lib-data', 'lib-meta'], 'library db has kv + two library stores');
   t.eq(idb.types, [[true, 'object', 'gzip']], 'payload is a Blob, not a string');
-  t.ok(idb.ver >= 2, 'db version bumped');
+  t.ok(idb.ver === 1 && idb.draftStores.join() === 'kv', 'draft db `char3d` is still version 1 with only kv (as on the live site)');
   const id1 = await L.linkedId(page);
   const firstSaved = items[0].updatedAt;
   await page.waitForTimeout(3600);
@@ -60,16 +60,23 @@ main('library-browser', async (base) => {
   await page.waitForTimeout(3500);
   t.eq((await L.list(page))[0].updatedAt, upd, 'merely reloading does not re-save the entry');
 
-  // ---- Ctrl+S on a linked character, and the hidden-tab flush
+  // ---- tab hidden / Ctrl+S must save on their own: the 2.5 s debounce is pushed out to 10 minutes here, so a pass cannot come from auto-save
+  const yOf = (id) => window.__c3d.library.get(id).then((g) => g.project.slots.head.params.offset[1]);
+  await page.evaluate(() => { window.__c3dAutosaveMs = 600000; });
   await L.editHead(page, 0.3);
+  await page.waitForTimeout(1500);
+  t.ok(await page.evaluate(yOf, id1) !== 0.3, 'control: with the debounce pushed out, an edit is NOT saved by itself');
   await page.evaluate(() => { Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => 'hidden' }); document.dispatchEvent(new Event('visibilitychange')); });
-  await L.until(page, (id) => window.__c3d.library.get(id).then((g) => g.project.slots.head.params.offset[1] === 0.3), id1, 15000);
-  t.ok(true, 'switching away from the tab flushes the pending save right away (no 2.5 s wait)');
+  await L.until(page, (id) => window.__c3d.library.get(id).then((g) => g.project.slots.head.params.offset[1] === 0.3), id1, 4000);
+  t.ok(true, 'switching away from the tab flushes the pending save at once');
   await page.evaluate(() => { delete document.visibilityState; });
   await L.editHead(page, 0.2);
+  await page.waitForTimeout(1000);
+  t.ok(await page.evaluate(yOf, id1) === 0.3, 'control: still not saved by itself');
   await page.keyboard.press('Control+s');
-  await L.until(page, (id) => window.__c3d.library.get(id).then((g) => g.project.slots.head.params.offset[1] === 0.2), id1, 15000);
-  t.ok(true, 'Ctrl+S saves immediately');
+  await L.until(page, (id) => window.__c3d.library.get(id).then((g) => g.project.slots.head.params.offset[1] === 0.2), id1, 10000);
+  t.ok(true, 'Ctrl+S saves at once');
+  await page.evaluate(() => { window.__c3dAutosaveMs = 0; });
 
   // ---- new character: linked → saved first, blank, unlinked
   await page.click('#btnNew');
@@ -113,7 +120,7 @@ main('library-browser', async (base) => {
   await page.waitForFunction(() => document.querySelectorAll('#libBody .lib-card').length === 2);
   t.eq((await L.list(page)).length, 2, 'delete');
   const orphan = await page.evaluate(async () => {
-    const db = await new Promise((res) => { const r = indexedDB.open('char3d'); r.onsuccess = () => res(r.result); });
+    const db = await new Promise((res) => { const r = indexedDB.open('char3d-library'); r.onsuccess = () => res(r.result); });
     const n = (s) => new Promise((res) => { const r = db.transaction(s).objectStore(s).count(); r.onsuccess = () => res(r.result); });
     const out = [await n('lib-meta'), await n('lib-data')]; db.close(); return out;
   });

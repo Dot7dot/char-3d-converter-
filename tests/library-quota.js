@@ -15,7 +15,7 @@ const INIT = `
 `;
 const pct = (p) => `window.__est = { usage: ${p} * 1e9, quota: 1e9 }`;
 const counts = (page) => page.evaluate(async () => {
-  const db = await new Promise((res) => { const r = indexedDB.open('char3d'); r.onsuccess = () => res(r.result); });
+  const db = await new Promise((res) => { const r = indexedDB.open('char3d-library'); r.onsuccess = () => res(r.result); });
   const n = (s) => new Promise((res) => { const r = db.transaction(s).objectStore(s).count(); r.onsuccess = () => res(r.result); });
   const out = [await n('lib-meta'), await n('lib-data')]; db.close(); return out;
 });

@@ -14,6 +14,9 @@ module.exports = (dirName) => `
   const perm = () => sessionStorage.getItem('perm') || 'granted';
   FileSystemDirectoryHandle.prototype.queryPermission = async () => perm();
   FileSystemDirectoryHandle.prototype.requestPermission = async () => { sessionStorage.removeItem('perm'); return 'granted'; };
+  // every file write is logged (tests assert "no write happened")
+  window.__w = []; const cw = FileSystemFileHandle.prototype.createWritable;
+  FileSystemFileHandle.prototype.createWritable = function (...a) { window.__w.push(this.name); return cw.apply(this, a); };
   const wrapper = () => ({
     kind: 'directory', name: DIR,
     queryPermission: async () => perm(),
