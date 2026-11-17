@@ -5,7 +5,8 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { TransformControls } from 'three/addons/controls/TransformControls.js';
 import { SLOTS, SLOT_BY_ID, VIEWS, defaultParams, mergeParams, CONVERT_KEYS, icon } from './slots.js';
-import { processView, fileToDataURL, isIdentityAlign, makeCanvas, mirrorCanvas } from './imageproc.js';
+import { processView, loadImage, isIdentityAlign, makeCanvas, mirrorCanvas } from './imageproc.js';
+import { openCropper } from './crop.js';
 import { editView, hasEdits } from './imgedit.js';
 import { convertPart, MODES, QUALITY, BUDGETS, simplifyGeometry, simplifierReady, resolveMode } from './converter.js';
 import { buildCharacter, makeMaterial, applyParamsToMesh, paramsFromMesh, releaseLegCache } from './character.js';
@@ -1090,6 +1091,7 @@ function cardHTML(s) {
               <input type="file" accept="image/*">
               <img alt="" hidden>
               <span class="lbl"><b>${v.name}${v.required ? ' *' : ''}</b><i>${v.required ? '點擊或拖放' : '選填'}</i></span>
+              <button type="button" class="mini crop" title="重新裁切">✂</button>
               <button type="button" class="mini flip" title="水平翻轉" aria-pressed="false">⇋</button>
               <button type="button" class="mini x" title="移除">✕</button>
             </label>`).join('')}
@@ -1213,6 +1215,10 @@ function bindCard(id) {
     $('.mini.x', drop).addEventListener('click', (e) => {
       e.preventDefault(); e.stopPropagation();
       S().views[vid] = null; updateCard(id); scheduleConvert(id, 0);
+    });
+    $('.mini.crop', drop).addEventListener('click', (e) => {
+      e.preventDefault(); e.stopPropagation();
+      recropView(id, vid);
     });
     $('.mini.flip', drop).addEventListener('click', (e) => {
       e.preventDefault(); e.stopPropagation();
@@ -1354,13 +1360,47 @@ function updateCard(id) {
   $('.tune-info', card).textContent = bits.length ? `已套用：${bits.join('、')}。重新轉換時會自動保留。` : '';
 }
 
+/** Scale an image / canvas down so its longer side is at most `max` pixels. */
+function fitCanvas(img, max) {
+  const w = img.naturalWidth || img.width, h = img.naturalHeight || img.height;
+  const k = Math.min(1, max / Math.max(w, h));
+  const c = makeCanvas(w * k, h * k);
+  const ctx = c.getContext('2d');
+  ctx.imageSmoothingQuality = 'high';
+  ctx.drawImage(img, 0, 0, c.width, c.height);
+  return c;
+}
+const viewTitle = (id, vid) => `${SLOT_BY_ID[id].name} · ${VIEWS.find((v) => v.id === vid).name}`;
+
+/** A new photo / file for a view: crop first, then convert. */
 async function setView(id, vid, file) {
   try {
-    const src = await fileToDataURL(file);
-    state.slots[id].views[vid] = { src, flip: false };
-    updateCard(id);
-    scheduleConvert(id, 0);
+    const photo = fitCanvas(await loadImage(file), 2048); // crop at high resolution, store smaller
+    const out = await openCropper({ source: photo, title: viewTitle(id, vid) });
+    if (!out) return; // cancelled → nothing changes
+    useViewImage(id, vid, out, file);
   } catch (e) { toast('讀取圖片失敗：' + e.message); }
+}
+/** Crop again — from the original file when it is still available, otherwise from the stored picture. */
+async function recropView(id, vid) {
+  const v = state.slots[id].views[vid];
+  if (!v) return;
+  try {
+    const source = fitCanvas(await loadImage(v.file || v.src), 2048);
+    const out = await openCropper({ source, title: viewTitle(id, vid), turns: v.file ? v.turns : 0 });
+    if (out) useViewImage(id, vid, out, v.file || null, v.flip);
+  } catch (e) { toast('無法裁切：' + e.message); }
+}
+function useViewImage(id, vid, out, file, flip = false) {
+  const st = state.slots[id], p = st.params;
+  // `file` (kept only for this session) lets the picture be re-cropped from the full photo
+  st.views[vid] = { src: fitCanvas(out.canvas, 1024).toDataURL('image/png'), flip, file, turns: file ? out.turns : 0 };
+  // touch-ups and alignment were made for the previous picture
+  p.edits = { ...p.edits, [vid]: [] };
+  if (vid !== 'front') p.align = { ...p.align, [vid]: { dx: 0, dy: 0, sx: 1, sy: 1, rot: 0 } };
+  st.snapshot = JSON.stringify(p);
+  updateCard(id);
+  scheduleConvert(id, 0);
 }
 
 async function openAlign(id) {
