@@ -120,9 +120,9 @@
         </div>
       </div>
       <div class="hud bottom">
-        <div class="toolbar" id="animBar" aria-label="動畫預覽"></div>
+        <div class="toolbar m-extra" id="animBar" aria-label="動畫預覽"></div>
         <div class="hud-col right">
-          <div class="toolbar" id="viewBar" aria-label="視角">
+          <div class="toolbar m-extra" id="viewBar" aria-label="視角">
             <button class="tbtn" data-preset="persp" aria-pressed="true" title="透視 (0)">透視</button>
             <button class="tbtn" data-preset="front" aria-pressed="false" title="正視圖 (1)">正</button>
             <button class="tbtn" data-preset="back" aria-pressed="false" title="背視圖 (2)">背</button>
@@ -134,10 +134,12 @@
             <input type="range" id="refOpacity" min="0.1" max="1" step="0.05" value="0.5" title="參考圖透明度" aria-label="參考圖透明度">
           </div>
           <div class="toolbar">
+            <button class="tbtn mobile-only" id="tMore" aria-pressed="false" title="顯示動畫、視角等更多工具">更多工具</button>
+            <button class="tbtn mobile-only" id="tStageSize" title="切換 3D 畫面的高度">畫面大小</button>
             <button class="tbtn" id="tSolo" aria-pressed="false" title="只顯示選取的部位 (H)">單獨</button>
-            <button class="tbtn" id="tWire" aria-pressed="false" title="線框">線框</button>
-            <button class="tbtn" id="tSockets" aria-pressed="false" title="顯示插槽">插槽</button>
-            <button class="tbtn" id="tSpin" aria-pressed="false" title="自動旋轉">旋轉</button>
+            <button class="tbtn m-extra" id="tWire" aria-pressed="false" title="線框">線框</button>
+            <button class="tbtn m-extra" id="tSockets" aria-pressed="false" title="顯示插槽">插槽</button>
+            <button class="tbtn m-extra" id="tSpin" aria-pressed="false" title="自動旋轉">旋轉</button>
             <button class="tbtn" id="tView" title="置中：對準選取部位或整個模型 (F)">置中</button>
           </div>
         </div>
@@ -174,7 +176,7 @@
       <div class="dlg-body help">
         <h3>流程</h3>
         <ol>
-          <li><b>圖片</b>：在部位卡片上傳正面圖（必填），有側面 / 背面 / 頂部就一起放。圖不吻合時按「對齊三視圖」。</li>
+          <li><b>圖片</b>：在部位卡片上傳正面圖（必填），有側面 / 背面 / 頂部就一起放。按「對齊與修圖」可以移動縮放各視圖、用<b>變形點</b>修外形、用<b>橡皮擦</b>擦掉多餘的部分，旁邊有 3D 即時預覽。</li>
           <li><b>成形</b>：選轉換方式，調厚度、圓潤度。有側面圖時，角色部位預設用「側面輪廓塑形」，即使兩張圖畫得不一致也不會破洞。</li>
           <li><b>微調</b>：切到正 / 側 / 頂視圖，打開「參考圖」把原圖疊在模型上，再用拉伸、變形籠或雕刻筆刷把外形修到吻合。</li>
           <li><b>擺放</b>：調整大小、位置、角度。</li>

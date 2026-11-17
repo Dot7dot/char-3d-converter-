@@ -209,7 +209,7 @@ export async function processView(src, { removeBg = true, tolerance = 30, flipX 
 }
 
 /** Build every derived canvas (mask, bled colours, core) from a cropped RGBA canvas. */
-function finishView(alphaCanvas, method) {
+export function finishView(alphaCanvas, method) {
   const w = alphaCanvas.width, h = alphaCanvas.height;
   const crop = alphaCanvas.getContext('2d', { willReadFrequently: true }).getImageData(0, 0, w, h);
   const cmask = new Uint8Array(w * h);
@@ -252,20 +252,6 @@ export function drawAligned(ctx, img, x, y, w, h, t = IDENTITY_ALIGN) {
   ctx.scale(t.sx, t.sy);
   ctx.drawImage(img, -w / 2, -h / 2, w, h);
   ctx.restore();
-}
-
-/** Return a processed view whose content is moved / scaled / rotated inside its own frame. */
-export function alignView(raw, t) {
-  if (isIdentityAlign(t)) return raw;
-  const c = makeCanvas(raw.w, raw.h);
-  const ctx = c.getContext('2d');
-  ctx.imageSmoothingQuality = 'high';
-  drawAligned(ctx, raw.alphaCanvas, 0, 0, raw.w, raw.h, t);
-  // re-binarise the alpha so the silhouette stays crisp
-  const d = ctx.getImageData(0, 0, raw.w, raw.h);
-  for (let i = 3; i < d.data.length; i += 4) d.data[i] = d.data[i] >= 128 ? 255 : 0;
-  ctx.putImageData(d, 0, 0);
-  return finishView(c, raw.method);
 }
 
 /**
