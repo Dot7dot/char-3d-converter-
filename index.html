@@ -27,14 +27,14 @@
       <button role="tab" data-mode="character" aria-selected="true">角色</button>
       <button role="tab" data-mode="object" aria-selected="false">物件</button>
     </div>
+    <button class="lib-chip" id="libStatus" type="button" hidden></button>
     <div class="actions">
       <button class="btn ghost" id="btnHelp" title="操作說明與快捷鍵">說明</button>
       <button class="btn ghost" id="btnSample" title="載入範例圖片">範例</button>
-      <button class="btn ghost" id="btnOpen" title="開啟 .c3d.json 專案">開啟</button>
-      <button class="btn ghost" id="btnSave" title="儲存專案">儲存</button>
-      <button class="btn ghost" id="btnReset" title="清除全部">清除</button>
+      <button class="btn ghost" id="btnLibrary" title="看看存起來的角色與物件，選一個繼續編輯">儲存庫</button>
+      <button class="btn ghost" id="btnSave" title="把目前的角色存進儲存庫 (Ctrl+S)">儲存</button>
+      <button class="btn ghost" id="btnNew" title="開始一個空白的新角色">新角色</button>
       <button class="btn primary" id="btnExport">匯出</button>
-      <input type="file" id="fileProject" accept=".json,.c3d.json,application/json" hidden>
     </div>
   </header>
 
@@ -170,6 +170,26 @@
     </form>
   </dialog>
 
+  <dialog id="libraryDlg" class="dialog lib-dlg" aria-labelledby="libTitle">
+    <form method="dialog" class="dlg-inner">
+      <header class="dlg-head"><h2 id="libTitle">儲存庫</h2><button type="button" class="icon-btn" id="libClose" aria-label="關閉">✕</button></header>
+      <div class="dlg-body" id="libBody"></div>
+      <footer class="dlg-foot lib-foot">
+        <button type="button" class="btn" id="libImport" title="放入 .c3d.json 專案檔或之前備份的 ZIP">匯入</button>
+        <button type="button" class="btn" id="libBackup" title="把所有角色打包成一個 ZIP 下載">備份全部</button>
+        <span class="lib-spacer"></span>
+        <button type="button" class="btn primary" id="libDone">完成</button>
+      </footer>
+      <input type="file" id="libFile" accept=".json,.c3d.json,.zip,application/json,application/zip" multiple hidden>
+    </form>
+  </dialog>
+
+  <div class="lib-banner" id="libBanner" role="alert" hidden>
+    <span></span>
+    <button type="button" class="btn small" data-act="backup">備份全部</button>
+    <button type="button" class="icon-btn" data-act="close" aria-label="關閉提醒">✕</button>
+  </div>
+
   <dialog id="helpDlg" class="dialog">
     <form method="dialog" class="dlg-inner">
       <header class="dlg-head"><h2>操作說明</h2><button class="icon-btn" value="cancel" aria-label="關閉">✕</button></header>
@@ -180,6 +200,7 @@
           <li><b>成形</b>：選轉換方式，調厚度、圓潤度。有側面圖時，角色部位預設用「側面輪廓塑形」，即使兩張圖畫得不一致也不會破洞。</li>
           <li><b>微調</b>：切到正 / 側 / 頂視圖，打開「參考圖」把原圖疊在模型上，再用拉伸、變形籠或雕刻筆刷把外形修到吻合。</li>
           <li><b>擺放</b>：調整大小、位置、角度。</li>
+          <li><b>儲存</b>：按「儲存」把角色放進<b>儲存庫</b>，之後的變更會自動存進去。按「儲存庫」可以看到所有存起來的角色，選一個繼續編輯。</li>
           <li><b>匯出</b>：選格式下載。面數預算可在「專案設定」調整。</li>
         </ol>
         <h3>快捷鍵</h3>
@@ -187,14 +208,16 @@
           <span><kbd>Q</kbd> 檢視</span><span><kbd>W</kbd> 移動</span><span><kbd>E</kbd> 旋轉</span><span><kbd>R</kbd> 縮放</span>
           <span><kbd>T</kbd> 變形籠</span><span><kbd>B</kbd> 雕刻</span><span><kbd>F</kbd> 置中</span><span><kbd>H</kbd> 單獨顯示</span>
           <span><kbd>0</kbd> 透視</span><span><kbd>1</kbd> 正</span><span><kbd>2</kbd> 背</span><span><kbd>3</kbd> 側</span><span><kbd>4</kbd> 左</span><span><kbd>5</kbd> 頂</span>
-          <span><kbd>Ctrl</kbd>+<kbd>Z</kbd> 復原</span><span><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Z</kbd> 重做</span>
+          <span><kbd>Ctrl</kbd>+<kbd>S</kbd> 儲存</span><span><kbd>Ctrl</kbd>+<kbd>Z</kbd> 復原</span><span><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Z</kbd> 重做</span>
         </div>
         <h3>雕刻</h3>
         <div class="keys">
           <span><kbd>G</kbd> 拉扯</span><span><kbd>I</kbd> 鼓起</span><span><kbd>D</kbd> 凹陷</span><span><kbd>S</kbd> 平滑</span><span><kbd>L</kbd> 壓平</span>
           <span><kbd>[</kbd> <kbd>]</kbd> 筆刷大小</span><span>按住 <kbd>Shift</kbd> 平滑</span><span>按住 <kbd>Ctrl</kbd> 反向</span>
         </div>
-        <p class="note">在模型上拖曳是雕刻；在空白處拖曳是轉動視角，右鍵拖曳平移，滾輪縮放。雕刻會保存下來，之後改厚度或品質也會自動重新套用。編輯內容會自動儲存在這個瀏覽器。</p>
+        <h3>儲存庫</h3>
+        <p class="note" style="margin-top:0">儲存庫是你的角色收納箱，做到一半的角色或物件都可以存在這裡。在電腦的 Chrome / Edge 上可以選一個資料夾，每個角色就是裡面的一個 <code>.c3d.json</code> 檔；手機、平板和其他瀏覽器則存在這個瀏覽器裡。已經存進去的角色，之後的變更會自動儲存。「匯入」可以放入專案檔或備份，「備份全部」會把所有角色打包成一個 ZIP。存在瀏覽器時，清除網站資料會一併刪除角色，請定期備份。</p>
+        <p class="note">在模型上拖曳是雕刻；在空白處拖曳是轉動視角，右鍵拖曳平移，滾輪縮放。雕刻會保存下來，之後改厚度或品質也會自動重新套用。沒有存進儲存庫的編輯內容，也會暫存在這個瀏覽器，重新整理不會遺失。</p>
       </div>
       <footer class="dlg-foot"><button class="btn primary" value="cancel">知道了</button></footer>
     </form>

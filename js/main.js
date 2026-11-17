@@ -15,6 +15,8 @@ import * as SC from './sculpt.js';
 import { openAlignEditor } from './align.js';
 import * as EX from './exporter.js';
 import { characterSamples, objectSample } from './samples.js';
+import { createLibrary, openDB } from './library.js';
+import { initLibraryUI } from './library-ui.js';
 
 const $ = (s, el = document) => el.querySelector(s);
 const $$ = (s, el = document) => [...el.querySelectorAll(s)];
@@ -1514,6 +1516,7 @@ function setMode(mode) {
 // ============================================================== samples / project / autosave
 $('#btnHelp').addEventListener('click', () => $('#helpDlg').showModal());
 $('#btnSample').addEventListener('click', async () => {
+  if (!(await lib.leaveLinked())) return; // a saved character must not be overwritten by the sample
   flushSculpt();
   const set = state.mode === 'object' ? objectSample() : characterSamples();
   for (const [id, views] of Object.entries(set)) {
@@ -1540,17 +1543,6 @@ function projectData() {
   }
   return { format: 'char3d-project', version: 3, savedAt: new Date().toISOString(), mode: state.mode, settings: state.settings, slots };
 }
-$('#btnSave').addEventListener('click', () => {
-  const json = JSON.stringify(projectData());
-  EX.download(new Blob([json], { type: 'application/json' }), `${safeFile(state.settings.name)}.c3d.json`);
-  toast('專案已儲存');
-});
-$('#btnOpen').addEventListener('click', () => $('#fileProject').click());
-$('#fileProject').addEventListener('change', async (e) => {
-  const f = e.target.files[0]; e.target.value = '';
-  if (!f) return;
-  try { await loadProject(JSON.parse(await f.text())); toast('專案已開啟'); } catch (err) { toast('無法開啟專案：' + err.message); }
-});
 async function loadProject(data) {
   if (data.format !== 'char3d-project') throw new Error('不是 Char3D 專案檔');
   dropSculptSession();
@@ -1575,23 +1567,20 @@ async function loadProject(data) {
   await Promise.all(SLOTS.filter((s) => state.slots[s.id].views.front).map((s) => convertSlot(s.id)));
   frame();
 }
-$('#btnReset').addEventListener('click', () => {
-  if (!confirm('確定清除所有上傳的圖片與設定？')) return;
+/** A blank character (asked-for-confirmation and unlinking are done by the library UI before this runs). */
+function newProject() {
   dropSculptSession();
   for (const s of SLOTS) { disposePart(state.slots[s.id]); state.slots[s.id] = freshSlot(s); }
   state.slots[state.mode === 'object' ? 'object' : 'head'].open = true;
   state.selected = null;
+  state.settings.name = 'MyHero'; $('#setName').value = $('#expName').value = 'MyHero';
   clearHistory();
   renderSlots(); assemble({ keepCamera: false });
   autosaveClear();
-});
+}
 
 // autosave to IndexedDB so a refresh never loses work
-const idb = () => new Promise((res, rej) => {
-  const rq = indexedDB.open('char3d', 1);
-  rq.onupgradeneeded = () => rq.result.createObjectStore('kv');
-  rq.onsuccess = () => res(rq.result); rq.onerror = () => rej(rq.error);
-});
+const idb = () => openDB(); // shared with the library (it owns the schema: kv + library stores)
 async function idbOp(mode, fn) {
   const db = await idb();
   return new Promise((res, rej) => {
@@ -1600,10 +1589,18 @@ async function idbOp(mode, fn) {
   });
 }
 let saveTimer = null, autosaveOn = false;
+let lib = null; // library UI controller (set at boot)
+/** The draft also remembers which library entry it belongs to, so a reload continues the same entry. */
+function draftData() {
+  const linked = lib && lib.linked;
+  return linked ? { ...projectData(), libraryId: linked.id, libraryName: linked.name } : projectData();
+}
+function writeDraft() { return idbOp('readwrite', (s) => s.put(draftData(), 'autosave')).catch(() => {}); }
 function touch() {
+  if (lib) lib.markDirty();
   if (!autosaveOn) return;
   clearTimeout(saveTimer);
-  saveTimer = setTimeout(() => { idbOp('readwrite', (s) => s.put(projectData(), 'autosave')).catch(() => {}); }, 1200);
+  saveTimer = setTimeout(writeDraft, 1200);
 }
 function autosaveClear() { clearTimeout(saveTimer); idbOp('readwrite', (s) => s.delete('autosave')).catch(() => {}); }
 
@@ -1781,16 +1778,32 @@ state.slots.head.open = true;
 renderSlots();
 updateUndoButtons();
 assemble({ keepCamera: false });
+const library = createLibrary();
+lib = initLibraryUI({
+  library,
+  getProject: projectData,
+  openProject: loadProject,
+  newProject,
+  getThumb: previewCanvas,
+  hasContent: () => Object.keys(projectData().slots).length > 0,
+  getName: () => state.settings.name,
+  setName: (n) => { state.settings.name = n; $('#setName').value = n; $('#expName').value = n; touch(); },
+  flushDraft: () => { if (autosaveOn) { clearTimeout(saveTimer); writeDraft(); } },
+  toast,
+  download: EX.download,
+});
 window.__c3d = {
   state, scene, tc, SC, get camera() { return cam; }, get current() { return current; }, get latticeUI() { return latticeUI; }, get sc() { return sc; },
-  history, convertSlot, loadProject, doExport, resolveMode, setEdit, setPreset, selectSlot, undo, redo, commit, applyDeform, assemble, flushSculpt, slotMeshes, totalTris,
+  history, library, get lib() { return lib; }, convertSlot, loadProject, doExport, resolveMode, setEdit, setPreset, selectSlot, undo, redo, commit, applyDeform, assemble, flushSculpt, slotMeshes, totalTris,
 };
 (async () => {
   try {
+    await lib.ready;
     const saved = new URLSearchParams(location.search).has('fresh') ? null : await idbOp('readonly', (s) => s.get('autosave'));
     if (saved && Object.values(saved.slots || {}).some((s) => s.views && s.views.front)) {
       await loadProject(saved);
-      toast('已還原上次的編輯（按「清除」可重新開始）', 3600);
+      const linked = await lib.restoreLink({ id: saved.libraryId, name: saved.libraryName });
+      toast(linked ? `已還原上次的編輯：「${lib.linked.name}」` : '已還原上次的編輯（按「新角色」可重新開始）', 3600);
     }
   } catch (e) { console.warn('autosave restore failed', e); }
   autosaveOn = true;

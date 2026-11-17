@@ -21,11 +21,15 @@ function startServer() {
   });
 }
 
-const LAUNCH = { args: ['--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader'] };
+// LANG: Chromium maps file names through the system locale; under the plain POSIX locale (many CI containers)
+// non-ASCII names such as 勇者__….c3d.json are rejected, which real desktops do not do. `posix` tests that case.
+const UTF8 = { ...process.env, LANG: 'C.UTF-8', LC_ALL: 'C.UTF-8' };
+const POSIX = { ...process.env, LANG: 'C', LC_ALL: 'C' };
+const LAUNCH = { args: ['--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader'], env: UTF8 };
 
 /** Browser + page that records console errors / page errors; `ctx` is a fresh (empty-storage) context. */
-async function open(base, { device, viewport = { width: 1400, height: 860 }, init, query = '', library = false } = {}) {
-  const browser = await chromium.launch(LAUNCH);
+async function open(base, { device, viewport = { width: 1400, height: 860 }, init, query = '', library = false, posix = false } = {}) {
+  const browser = await chromium.launch(process.env.C3D_CHANNEL ? { ...LAUNCH, channel: process.env.C3D_CHANNEL } : posix ? { ...LAUNCH, env: POSIX } : LAUNCH);
   const ctx = await browser.newContext(device ? { ...devices[device] } : { viewport, acceptDownloads: true });
   const page = await ctx.newPage();
   const errors = [];
@@ -52,7 +56,7 @@ function suite(name) {
       results.push(!!cond);
       console.log(`${cond ? 'PASS' : 'FAIL'}  ${msg}${!cond && extra !== undefined ? '  -> ' + JSON.stringify(extra) : ''}`);
     },
-    eq(a, b, msg) { t.ok(JSON.stringify(a) === JSON.stringify(b), `${msg} (got ${JSON.stringify(a)}, want ${JSON.stringify(b)})`); },
+    eq(a, b, msg, extra) { t.ok(JSON.stringify(a) === JSON.stringify(b), `${msg} (got ${JSON.stringify(a)}, want ${JSON.stringify(b)})`, extra); },
     done() {
       const fail = results.filter((r) => !r).length;
       console.log(`\n${name}: ${results.length - fail}/${results.length} passed${fail ? `, ${fail} FAILED` : ''}`);
