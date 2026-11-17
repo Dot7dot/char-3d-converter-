@@ -19,6 +19,7 @@ page errors count as failures.
 | `library-folder.js` | Folder backend (picker stubbed with an OPFS directory): files + index, auto-save, rename = file rename, rebuild of a deleted index, hand-copied files, reload, permission re-grant, disk-full write, deleted folder, copy from browser storage |
 | `library-folder-ascii.js` | Folder backend on a file system that rejects non-ASCII names (ASCII fallback) |
 | `library-folder-dup.js` | Hand-placed files sharing a library id are never deleted or overwritten (both listing orders) |
+| `library-folder-own.js` | The app only ever deletes a file it provably wrote (index `own`): lost-index flip after a rename, derived-id card edited repeatedly, taken ASCII fallback name; three listing orders |
 | `library-minor.js` | Chip locked during restore, offline leave guard wording, refused / missing folder feedback, no reconnect state when no folder was chosen |
 | `library-race.js` | Start-up restore race (新角色 / 範例 / open during restore, buttons locked and forced on), draft keeps the library link, 範例 guard, size clamp, object default name, switching storage |
 | `library-upgrade.js` | Live version (`origin/main`) and this version on one origin: `char3d` stays v1, old and new tabs both keep saving the draft, rollback works |

@@ -75,6 +75,13 @@ function hashId(str) {
   for (let i = 0; i < str.length; i++) { a = Math.imul(a ^ str.charCodeAt(i), 0x01000193) >>> 0; b = Math.imul(b + str.charCodeAt(i), 0x85ebca6b) >>> 0; }
   return 'f' + a.toString(16).padStart(8, '0') + b.toString(16).padStart(8, '0');
 }
+/** Stable id for a same-id copy: hash of (id, file), re-hashed until it collides with nothing that is in use. */
+function uniqueDerivedId(id, file, used) {
+  let nid = hashId(id + file);
+  while (used.has(nid)) nid = hashId(nid + file);
+  used.add(nid);
+  return nid;
+}
 /** Content identity of a project, ignoring the bookkeeping that changes on every save. */
 const fingerprint = (p) => JSON.stringify({ ...p, library: undefined, savedAt: undefined });
 const withLibrary = (project, m) => ({ ...project, library: { id: m.id, name: m.name, createdAt: m.createdAt, updatedAt: m.updatedAt, thumb: m.thumb || undefined } });
@@ -192,7 +199,12 @@ class FolderBackend {
       size: file.size, mtime: file.lastModified, file: name, thumb: lib.thumb || null,
     };
   }
-  /** Gallery metadata: trust the index entry when file size and time still match, otherwise re-read that file. */
+  /**
+   * Gallery metadata: trust the index entry when file size and time still match, otherwise re-read that file.
+   * `own: true` in an index entry means "the app wrote exactly this file" (set only by put()). A file that was
+   * re-read, and every entry of an index that had to be rebuilt, is NOT own — the app can then never prove it
+   * wrote it, so it will never delete it.
+   */
   async scan(retried = false) {
     const index = await this.readIndexFile();
     const known = new Map(index.map((e) => [e.file, e]));
@@ -205,25 +217,28 @@ class FolderBackend {
       cands.push(m);
     }
     // Several files may claim one id (an old export or a copy dropped in by hand, or another tab mid-rename).
-    // Who owns the id is decided by rule, never by listing order: the file the index recorded for it, else the file
-    // named exactly like the app would name it, else the newest library.updatedAt. Every other file keeps working as
-    // its own character under a derived id — only in the index; the user's file is not rewritten.
+    // Who owns the id is decided by rule, never by listing order: (1) the file the index recorded for it, else
+    // (2) among files named like the app would name them, the newest library.updatedAt, then the file name, else
+    // (3) the newest updatedAt overall. Every other file stays a separate card under a derived id (index only).
     const groups = new Map();
     for (const m of cands) groups.set(m.id, [...(groups.get(m.id) || []), m]);
     if (!retried && [...groups.values()].some((g) => g.length > 1)) { await new Promise((r) => setTimeout(r, 300)); return this.scan(true); }
     const indexedFile = new Map(index.map((e) => [e.id, e.file]));
+    const newest = (arr) => [...arr].sort((x, y) => Date.parse(y.updatedAt) - Date.parse(x.updatedAt) || (x.file < y.file ? -1 : 1))[0];
+    const used = new Set(groups.keys()); // derived ids must not collide with any id that is really in use
     const out = [];
     for (const [id, g] of groups) {
       let owner = g[0];
       if (g.length > 1) {
-        owner = g.find((m) => m.file === indexedFile.get(id))
-          || g.find((m) => m.file === fileNameFor(m) || m.file === fileNameFor(m, true))
-          || [...g].sort((x, y) => Date.parse(y.updatedAt) - Date.parse(x.updatedAt) || (x.file < y.file ? -1 : 1))[0];
+        const named = g.filter((m) => m.file === fileNameFor(m) || m.file === fileNameFor(m, true));
+        owner = g.find((m) => m.file === indexedFile.get(id)) || (named.length ? newest(named) : newest(g));
       }
-      for (const m of g) out.push(m === owner ? m : { ...m, id: hashId(id + m.file) });
+      for (const m of g) {
+        if (m === owner) { out.push(m); continue; }
+        const { own, ...rest } = m; // eslint-disable-line no-unused-vars
+        out.push({ ...rest, id: uniqueDerivedId(id, m.file, used), ...(own ? { own } : {}) });
+      }
     }
-    // files the app itself recorded (the only ones it may ever delete later)
-    this.recorded = new Map(index.filter((e) => out.some((m) => m.id === e.id && m.file === e.file)).map((e) => [e.id, e.file]));
     const key = (arr) => JSON.stringify([...arr].sort((a, b) => (a.file < b.file ? -1 : 1)));
     const before = key(index);
     this.metas = out;
@@ -249,22 +264,28 @@ class FolderBackend {
   async put(meta, project) {
     await this.list(false);
     const text = JSON.stringify(withLibrary(project, meta));
-    let file = fileNameFor(meta), f;
     // never overwrite a file that belongs to a different entry (e.g. a hand-placed copy that happens to be named like this)
     const taken = (n) => this.metas.some((e) => e.file === n && e.id !== meta.id);
-    for (let i = 2; taken(file); i++) file = fileNameFor(meta).replace(FILE_SUFFIX, `-${i}${FILE_SUFFIX}`);
+    const free = (n) => { let x = n; for (let i = 2; taken(x); i++) x = n.replace(FILE_SUFFIX, `-${i}${FILE_SUFFIX}`); return x; };
+    let file = free(fileNameFor(meta)), f;
     try { f = await this.writeFile(file, text); } catch (e) { // 1. the character …
       // a few file systems refuse non-ASCII names (TypeMismatchError / TypeError): keep the id part, drop the Chinese
       if (!e || (e.name !== 'TypeMismatchError' && e.name !== 'TypeError') || /^[\x20-\x7e]*$/.test(file)) throw e;
-      file = fileNameFor(meta, true);
+      file = free(fileNameFor(meta, true));
       f = await this.writeFile(file, text);
     }
-    const m = { ...meta, file, size: f.size, mtime: f.lastModified };
+    const m = { ...meta, file, size: f.size, mtime: f.lastModified, own: true }; // own: the app wrote exactly this file
     const prev = this.metas.find((e) => e.id === m.id);
-    // rename = new file name; only the file the app recorded for THIS entry may be removed (never a hand-placed one)
-    if (prev && prev.file !== file && this.recorded && this.recorded.get(m.id) === prev.file) { try { await this.dir.removeEntry(prev.file); } catch (_) { /* already gone */ } }
-    (this.recorded || (this.recorded = new Map())).set(m.id, file);
-    this.metas = [...this.metas.filter((e) => e.id !== m.id), m];
+    let rest = this.metas.filter((e) => e !== prev);
+    if (prev && prev.file !== file) {
+      // rename: the previous file may go only if the index proves the app wrote it itself (and only now that the new one is closed)
+      if (prev.own === true) { try { await this.dir.removeEntry(prev.file); } catch (_) { /* already gone */ } } else {
+        // not provably ours (hand-placed, or found by a scan): it stays, as its own card under a derived id
+        const { own, ...keep } = prev; // eslint-disable-line no-unused-vars
+        rest = [...rest, { ...keep, id: uniqueDerivedId(prev.id, prev.file, new Set(rest.map((e) => e.id).concat(m.id))) }];
+      }
+    }
+    this.metas = [...rest, m];
     await this.writeIndex(); // 2. … then the index (a stale index is repaired by the next scan)
     return m;
   }
@@ -411,7 +432,7 @@ export function createLibrary(g = globalThis) {
       let copied = 0;
       for (const m of await browserBackend.list()) {
         if (have.has(m.id)) continue;
-        const { file, mtime, encoding, size, ...meta } = m; // eslint-disable-line no-unused-vars
+        const { file, mtime, encoding, size, own, ...meta } = m; // eslint-disable-line no-unused-vars
         await folder.put(meta, await browserBackend.read(m.id)); copied++;
       }
       return copied;
@@ -446,7 +467,7 @@ export function createLibrary(g = globalThis) {
       assertReady();
       const meta = await be().getMeta(id);
       if (!meta) throw new NotFoundError('character missing', 'entry');
-      const { file, mtime, size, encoding, ...rest } = meta; // eslint-disable-line no-unused-vars
+      const { file, mtime, size, encoding, own, ...rest } = meta; // eslint-disable-line no-unused-vars
       return put({ ...rest, name: cleanName(name) }, await be().read(id)); // updatedAt stays: a rename is not an edit
     }),
     duplicate: (id, name) => serial(async () => {
