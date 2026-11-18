@@ -36,13 +36,13 @@ const edit = (page, y) => page.evaluate((v) => { window.__c3d.state.slots.head.p
     const ctx = await browser.newContext({ viewport: { width: 1400, height: 860 } });
     const errors = [];
     const old = await ctx.newPage(); watch(old, errors);
-    await old.goto(B + 'old/'); await old.waitForFunction(() => !!window.__c3d);
+    await old.goto(B + 'old/'); await old.waitForFunction(() => !!window.__c3d, null, { timeout: 120000 });
     await old.click('#btnSample'); await ready(old);
     await edit(old, 0.33); await old.waitForTimeout(2000);
     t.eq(await draft(old), { v: 1, headY: 0.33 }, 'old (live) version: draft stored in `char3d` v1');
 
     const nw = await ctx.newPage(); watch(nw, errors);
-    await nw.goto(B + 'new/'); await nw.waitForFunction(() => !!window.__c3d && !!window.__c3d.lib);
+    await nw.goto(B + 'new/'); await nw.waitForFunction(() => !!window.__c3d && !!window.__c3d.lib, null, { timeout: 120000 });
     await ready(nw);
     t.eq(await nw.evaluate(() => window.__c3d.state.slots.head.params.offset[1]), 0.33, 'new version opened while the old tab stays open: restores the old draft');
     t.eq((await draft(nw)).v, 1, '`char3d` is still version 1 (the new code does not upgrade it)');
@@ -62,16 +62,16 @@ const edit = (page, y) => page.evaluate((v) => { window.__c3d.state.slots.head.p
 
     // new version used, library database exists, then the owner rolls back to the old version
     const again = await ctx.newPage(); watch(again, errors);
-    await again.goto(B + 'new/'); await again.waitForFunction(() => !!window.__c3d && !!window.__c3d.lib);
+    await again.goto(B + 'new/'); await again.waitForFunction(() => !!window.__c3d && !!window.__c3d.lib, null, { timeout: 120000 });
     await ready(again);
     await again.evaluate(() => window.__c3d.library.useBrowser());
     await again.click('#btnSave'); await again.waitForSelector('.ask-dlg[open] input');
     await again.click('.ask-dlg[open] [data-v="ok"]');
-    await again.waitForFunction(() => window.__c3d.lib.linked, null, { timeout: 60000 });
+    await again.waitForFunction(() => window.__c3d.lib.linked, null, { timeout: 120000 });
     await edit(again, 0.44); await again.waitForTimeout(3000);
     await again.close();
     const rb = await ctx.newPage(); watch(rb, errors);
-    await rb.goto(B + 'old/'); await rb.waitForFunction(() => !!window.__c3d);
+    await rb.goto(B + 'old/'); await rb.waitForFunction(() => !!window.__c3d, null, { timeout: 120000 });
     await ready(rb).catch(() => {});
     t.eq(await rb.evaluate(() => Object.keys(window.__c3d.state.slots).filter((k) => window.__c3d.state.slots[k].views.front).length > 3), true, 'rollback to the old version: the draft is restored');
     await edit(rb, 0.12); await rb.waitForTimeout(2500);

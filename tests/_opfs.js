@@ -13,14 +13,14 @@ module.exports = (dirName) => `
   // permission state is steered from sessionStorage so it survives a reload: 'prompt' | 'denied' | (unset = granted)
   const perm = () => sessionStorage.getItem('perm') || 'granted';
   FileSystemDirectoryHandle.prototype.queryPermission = async () => perm();
-  FileSystemDirectoryHandle.prototype.requestPermission = async () => { sessionStorage.removeItem('perm'); return 'granted'; };
+  FileSystemDirectoryHandle.prototype.requestPermission = async () => { if (sessionStorage.getItem('refuse')) return 'denied'; sessionStorage.removeItem('perm'); return 'granted'; };
   // every file write is logged (tests assert "no write happened")
   window.__w = []; const cw = FileSystemFileHandle.prototype.createWritable;
   FileSystemFileHandle.prototype.createWritable = function (...a) { window.__w.push(this.name); return cw.apply(this, a); };
   const wrapper = () => ({
     kind: 'directory', name: DIR,
     queryPermission: async () => perm(),
-    requestPermission: async () => { sessionStorage.removeItem('perm'); return 'granted'; },
+    requestPermission: async () => { if (sessionStorage.getItem('refuse')) return 'denied'; sessionStorage.removeItem('perm'); return 'granted'; },
     values: async function* () { yield* (await real()).values(); },
     getFileHandle: async (n, o) => (await real()).getFileHandle(n, o),
     removeEntry: async (n, o) => (await real()).removeEntry(n, o),
