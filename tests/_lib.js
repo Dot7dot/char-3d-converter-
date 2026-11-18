@@ -31,7 +31,7 @@ async function editHead(page, value) {
   await page.locator('.card[data-slot="head"] input[type="number"][data-path="offset.1"]').blur();
 }
 const headY = (page) => page.evaluate(() => window.__c3d.state.slots.head.params.offset[1]);
-const openPanel = async (page) => { await page.click('#btnLibrary'); await page.waitForSelector('#libraryDlg[open]'); await page.waitForFunction(() => !!document.querySelector('#libBody .lib-grid, #libBody .lib-empty, #libBody .lib-alert')); };
+const openPanel = async (page) => { await page.click('#btnLibrary'); await page.waitForSelector('#libraryDlg[open]'); await page.waitForSelector('#libraryDlg[data-loaded="1"]'); }; // the list has really been read (not the pre-load render)
 const closePanel = async (page) => { await page.click('#libDone'); await page.waitForFunction(() => !document.querySelector('#libraryDlg[open]')); };
 const cards = (page) => page.$$eval('#libBody .lib-card', (els) => els.map((e) => ({ id: e.dataset.id, name: e.querySelector('h3').textContent, current: e.classList.contains('current') })));
 /** Click an action on the gallery card with this name. */

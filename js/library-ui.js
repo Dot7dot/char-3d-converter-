@@ -452,7 +452,8 @@ export function initLibraryUI(o) {
     if (st.ready) {
       try { metas = await library.list(); usage = await library.usage(); } catch (e) { err = e; }
     }
-    view = { ...view, st: library.status(), metas, usage, err };
+    view = { ...view, st: library.status(), metas, usage, err, loaded: true };
+    dlg.dataset.loaded = '1'; // tests (and the loading state) key off this
     render();
   }
   function locationHTML(st) {
@@ -512,7 +513,9 @@ export function initLibraryUI(o) {
     const parts = [locationHTML(st), usageHTML(st, usage)];
     if (err) parts.push(`<div class="lib-alert"><p>讀取儲存庫時發生問題：${esc(err.message || err)}</p></div>`);
     if (view.msg) parts.push(`<p class="lib-msg" role="status">${esc(view.msg)}</p>`);
-    if (st.ready && !err) {
+    if (st.ready && !err && !view.loaded) {
+      parts.push('<p class="lib-loading" role="status">讀取中…</p>'); // not "empty": the list has not been read yet
+    } else if (st.ready && !err) {
       parts.push(metas.length
         ? `<div class="lib-grid">${metas.map(cardHTML).join('')}</div>`
         : `<div class="lib-empty"><div class="lib-empty-ico">${PLACEHOLDER}</div><h3>儲存庫還是空的</h3>
@@ -541,7 +544,7 @@ export function initLibraryUI(o) {
   $('#libDone').addEventListener('click', () => dlg.close());
 
   async function openPanel() {
-    view.msg = '';
+    view.msg = ''; view.loaded = false; dlg.dataset.loaded = '0';
     if (!dlg.open) dlg.showModal();
     render();
     await refresh(); // the gallery is re-read every time the panel opens (another tab may have changed it)
