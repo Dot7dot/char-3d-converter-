@@ -279,7 +279,11 @@ class FolderBackend {
     let rest = this.metas.filter((e) => e !== prev);
     if (prev && prev.file !== file) {
       // rename: the previous file may go only if the index proves the app wrote it itself (and only now that the new one is closed)
-      if (prev.own === true) { try { await this.dir.removeEntry(prev.file); } catch (_) { /* already gone */ } } else {
+      let del = prev.own === true;
+      if (del) { // the index said "ours" at scan time: make sure the file is still exactly what we wrote right before deleting it
+        try { const cur = await (await this.dir.getFileHandle(prev.file)).getFile(); del = cur.size === prev.size && cur.lastModified === prev.mtime; } catch (_) { del = false; /* gone or unreadable: nothing to delete */ }
+      }
+      if (del) { try { await this.dir.removeEntry(prev.file); } catch (_) { /* already gone */ } } else if (prev.own === true && !(await this.dir.getFileHandle(prev.file).then(() => true, () => false))) { /* already gone: no card to keep */ } else {
         // not provably ours (hand-placed, or found by a scan): it stays, as its own card under a derived id
         const { own, ...keep } = prev; // eslint-disable-line no-unused-vars
         rest = [...rest, { ...keep, id: uniqueDerivedId(prev.id, prev.file, new Set(rest.map((e) => e.id).concat(m.id))) }];

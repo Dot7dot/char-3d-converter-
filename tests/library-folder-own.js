@@ -136,5 +136,30 @@ main('library-folder-own', async (base) => {
     await page.evaluate(async (d) => { await (await navigator.storage.getDirectory()).removeEntry(d, { recursive: true }); }, DIR).catch(() => {});
     await browser.close();
   }
+  // ---- delete window: the file changed after the scan that said "own" and before the rename removes it
+  {
+    const DIR = 'char3d-test-own-race';
+    const { browser, page, errors } = await open(base, { library: true, init: require('./_opfs')(DIR) });
+    await page.click('#btnSample'); await ready(page);
+    await L.saveAs(page, '勇者', 'folder');
+    const id = await L.linkedId(page); const id8 = id.replace(/[^a-z0-9]/gi, '').slice(0, 8);
+    await waitY(page, DIR, 0); await quiet(page);
+    // the user edits the app's file by hand (different size / mtime); the app's cached index entry still says "own"
+    await page.evaluate(async ([d, n]) => {
+      const h = await (await navigator.storage.getDirectory()).getDirectoryHandle(d);
+      const j = JSON.parse(await (await (await h.getFileHandle(n)).getFile()).text());
+      j.slots.head.params.offset[1] = 0.77; j.note = 'edited by the user';
+      const w = await (await h.getFileHandle(n)).createWritable(); await w.write(JSON.stringify(j)); await w.close();
+    }, [DIR, `勇者__${id8}.c3d.json`]);
+    await page.evaluate((i) => window.__c3d.library.rename(i, '英雄'), id); // no scan in between: cached prev.own === true
+    await quiet(page);
+    const f = await read(page, DIR);
+    t.ok(f.some((x) => x[0] === `勇者__${id8}.c3d.json` && x[2] === 0.77), 'delete window: the file changed since the scan is NOT deleted by the rename', f);
+    t.ok(f.some((x) => x[0] === `英雄__${id8}.c3d.json`), 'delete window: the renamed file was written', f);
+    t.eq(await cardsN(page), 2, 'delete window: the kept file shows as its own card');
+    t.eq(errors, [], 'delete window: no console / page errors');
+    await page.evaluate(async (d) => { await (await navigator.storage.getDirectory()).removeEntry(d, { recursive: true }); }, DIR).catch(() => {});
+    await browser.close();
+  }
   return t.done();
 });
